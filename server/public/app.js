@@ -1,5 +1,5 @@
 // Heraxos — клиент
-const APP_VERSION = '4';
+const APP_VERSION = '5';
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 let token = localStorage.getItem('hx_token'), me = localStorage.getItem('hx_me');
@@ -390,7 +390,7 @@ $('txt').addEventListener('input', () => {
 const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
 function pushState() {
-  if (AND) { $('pushState').textContent = 'Звонки и сообщения приходят через приложение Heraxos'; return; }
+  if (AND) { $('pushState').textContent = window.HeraxosPlatform === 'ios' ? 'Тестовая версия: звонки приходят, пока приложение открыто' : 'Звонки и сообщения приходят через приложение Heraxos'; return; }
   const s = !('PushManager' in window) ? (isIOS && !standalone ? 'Сначала добавьте на экран «Домой»' : 'Не поддерживается этим браузером')
     : Notification.permission === 'granted' ? 'Включены' : Notification.permission === 'denied' ? 'Запрещены в настройках браузера' : 'Нажмите, чтобы включить';
   $('pushState').textContent = s;

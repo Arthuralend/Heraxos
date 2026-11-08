@@ -51,7 +51,7 @@ app.set('trust proxy', false);
 app.use(express.json({ limit: '256kb' }));
 app.use((req, res, next) => { res.set({ 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY' }); next(); });
 // Версия веб-приложения: устаревшие клиенты получают команду перезагрузиться
-const APP_VERSION = '4';
+const APP_VERSION = '5';
 app.use(express.static(path.join(__dirname, 'public'), { maxAge: 0, etag: true, setHeaders: (res) => res.set('Cache-Control', 'no-cache') }));
 
 const attempts = new Map();

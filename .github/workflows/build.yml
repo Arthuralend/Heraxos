@@ -3,6 +3,7 @@ name: Сборка APK
 on:
   push:
     branches: [main]
+    paths-ignore: ['ios/**', 'server/**', '.github/workflows/ios.yml', 'README.md']
   workflow_dispatch:
 
 permissions:
