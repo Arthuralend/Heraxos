@@ -1,0 +1,13 @@
+{
+  "name": "heraxos",
+  "version": "1.0.0",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": { "start": "node server.js" },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "express": "^4.19.2",
+    "web-push": "^3.6.7",
+    "ws": "^8.18.0"
+  }
+}

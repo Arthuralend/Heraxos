@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Heraxos — администратор</title>
+<link rel="icon" href="/favicon.png">
+<style>
+:root{--brand:#d81e1e;--line:#e9edef;--mute:#667781;--red:#ea3943}
+*{box-sizing:border-box}body{margin:0;font:15px -apple-system,system-ui,Segoe UI,Roboto,sans-serif;background:#f0f2f5;color:#111b21}
+header{background:var(--brand);color:#fff;padding:14px 20px;display:flex;align-items:center;gap:12px}
+header img{width:34px;height:34px;border-radius:8px;background:#fff}
+header b{font-size:18px;flex:1}
+header button{background:rgba(255,255,255,.2);color:#fff;border:0;border-radius:8px;padding:8px 12px;cursor:pointer}
+main{max-width:860px;margin:20px auto;padding:0 14px}
+.card{background:#fff;border-radius:12px;padding:18px;margin-bottom:16px;box-shadow:0 1px 2px rgba(0,0,0,.06)}
+h3{margin:0 0 12px}
+input{padding:10px 12px;border:1px solid var(--line);border-radius:8px;font-size:15px;min-width:0}
+button.p{background:var(--brand);color:#fff;border:0;border-radius:8px;padding:10px 16px;font-weight:600;cursor:pointer}
+button.s{background:#fff;border:1px solid var(--line);border-radius:8px;padding:7px 10px;cursor:pointer}
+button.d{color:var(--red)}
+.f{display:flex;gap:8px;flex-wrap:wrap}.f input{flex:1}
+table{width:100%;border-collapse:collapse}
+td,th{padding:10px 8px;border-bottom:1px solid var(--line);text-align:left}
+th{color:var(--mute);font-weight:500;font-size:13px}
+td:last-child{text-align:right;white-space:nowrap}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#25c35e;margin-right:6px}
+.mute{color:var(--mute);font-size:13px}.err{color:var(--red);min-height:18px;font-size:14px;margin-top:6px}
+.note{background:#fff8e1;border-radius:10px;padding:12px 14px;font-size:13.5px;color:#5d4a00;margin-bottom:16px}
+#login{max-width:360px;margin:12vh auto;text-align:center}
+#login img{width:80px;border-radius:18px}
+#login input{width:100%;margin:14px 0 8px}
+#login button{width:100%}
+#panel{display:none}
+</style>
+</head>
+<body>
+<div id="login" class="card">
+  <img src="/logo.png" alt=""><h2>Heraxos · Админ</h2>
+  <input id="ap" type="password" placeholder="Пароль администратора" autocomplete="current-password">
+  <button class="p" id="bIn">Войти</button><div class="err" id="lerr"></div>
+</div>
+
+<div id="panel">
+  <header><img src="/logo.png" alt=""><b>Heraxos · Администрирование</b><button id="bOut">Выйти</button></header>
+  <main>
+    <div class="note">🔒 Администратор управляет только аккаунтами. Переписка хранится на сервере в зашифрованном виде, ключи есть только у собеседников, поэтому прочитать её отсюда невозможно. Звонки не записываются.</div>
+    <div class="card">
+      <h3>Добавить пользователя</h3>
+      <div class="f"><input id="nl" placeholder="Логин"><input id="np" placeholder="Пароль (от 6 символов)"><button class="p" id="bAdd">Добавить</button></div>
+      <div class="err" id="aerr"></div>
+    </div>
+    <div class="card">
+      <h3>Пользователи <span class="mute" id="cnt"></span></h3>
+      <input id="q" placeholder="Поиск" style="width:100%;margin-bottom:8px">
+      <table><thead><tr><th>Логин</th><th>Создан</th><th>Последний вход</th><th></th></tr></thead><tbody id="tb"></tbody></table>
+    </div>
+  </main>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+let tok = sessionStorage.getItem('hx_admin'), all = [];
+async function api(url, body, method) {
+  const r = await fetch(url, { method: method || (body ? 'POST' : 'GET'), headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tok }, body: body && JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 401 && url !== '/api/admin/login') { out(); throw new Error(j.error); }
+  if (!r.ok) throw new Error(j.error || 'Ошибка'); return j;
+}
+const fmt = (t) => t ? new Date(t).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
+function out() { sessionStorage.removeItem('hx_admin'); tok = null; $('panel').style.display = 'none'; $('login').style.display = 'block'; }
+async function show() { $('login').style.display = 'none'; $('panel').style.display = 'block'; load(); }
+$('bIn').onclick = async () => {
+  try { tok = (await api('/api/admin/login', { password: $('ap').value })).token; sessionStorage.setItem('hx_admin', tok); $('ap').value = ''; show(); }
+  catch (e) { $('lerr').textContent = e.message; }
+};
+$('ap').onkeydown = (e) => e.key === 'Enter' && $('bIn').click();
+$('bOut').onclick = out;
+async function load() { all = await api('/api/admin/users'); render(); }
+function render() {
+  const q = $('q').value.toLowerCase(), list = all.filter((u) => u.login.toLowerCase().includes(q));
+  $('cnt').textContent = '(' + all.length + ')';
+  $('tb').innerHTML = list.map((u) => `<tr><td>${u.online ? '<span class="dot"></span>' : ''}<b>${esc(u.login)}</b></td><td class="mute">${fmt(u.created)}</td><td class="mute">${u.online ? 'в сети' : fmt(u.lastSeen)}</td>
+    <td><button class="s" data-r="${esc(u.login)}">Сбросить пароль</button> <button class="s d" data-d="${esc(u.login)}">Удалить</button></td></tr>`).join('') || '<tr><td colspan="4" class="mute">Нет пользователей</td></tr>';
+}
+$('q').oninput = render;
+$('bAdd').onclick = async () => {
+  $('aerr').textContent = '';
+  try { await api('/api/admin/users', { login: $('nl').value.trim(), password: $('np').value }); $('nl').value = $('np').value = ''; load(); }
+  catch (e) { $('aerr').textContent = e.message; }
+};
+$('tb').onclick = async (e) => {
+  const r = e.target.dataset.r, d = e.target.dataset.d;
+  if (r) {
+    const p = prompt(`Новый пароль для «${r}» (от 6 символов).\n\nВнимание: старая переписка этого пользователя станет нечитаемой для него, потому что ключ шифрования был защищён старым паролем.`);
+    if (p) try { await api('/api/admin/reset', { login: r, password: p }); alert('Пароль изменён. Все сеансы пользователя завершены.'); load(); } catch (e) { alert(e.message); }
+  }
+  if (d && confirm(`Удалить пользователя «${d}» и все его чаты? Это необратимо.`)) {
+    try { await api('/api/admin/users/' + encodeURIComponent(d), null, 'DELETE'); load(); } catch (e) { alert(e.message); }
+  }
+};
+if (tok) show().catch(out);
+</script>
+</body>
+</html>

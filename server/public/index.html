@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<title>Heraxos</title>
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" href="/favicon.png">
+<link rel="apple-touch-icon" href="/icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Heraxos">
+<meta name="theme-color" content="#0e0f11">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute">
+  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M12 3C6.5 3 2 6.9 2 11.7c0 2.4 1.1 4.6 3 6.2L4 22l4.6-2.2c1.1.3 2.2.5 3.4.5 5.5 0 10-3.9 10-8.6S17.5 3 12 3z"/></symbol>
+  <symbol id="i-phone" viewBox="0 0 24 24"><path d="M6.6 10.8a15.2 15.2 0 0 0 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1A17 17 0 0 1 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1z"/></symbol>
+  <symbol id="i-video" viewBox="0 0 24 24"><path d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11z"/></symbol>
+  <symbol id="i-people" viewBox="0 0 24 24"><path d="M16 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm-8 0a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm0 2c-2.3 0-7 1.2-7 3.5V19h14v-2.5C15 14.2 10.3 13 8 13zm8 0h-1c1.2.8 2 1.9 2 3.5V19h6v-2.5c0-2.3-4.7-3.5-7-3.5z"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><path d="M19.4 13a7.5 7.5 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7 7 0 0 0-1.7-1L15 3h-4l-.4 2.7a7 7 0 0 0-1.7 1l-2.5-1-2 3.5L6.6 11a7.5 7.5 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1a7 7 0 0 0 1.7 1L11 21h4l.4-2.7a7 7 0 0 0 1.7-1l2.5 1 2-3.5zM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z" transform="translate(-1 0)"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M15.4 4.6 8 12l7.4 7.4-1.4 1.4L5.2 12 14 3.2z"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M3 20.5 21.5 12 3 3.5 3 10l13 2-13 2z"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><path d="M17 9h-1V7a4 4 0 0 0-8 0v2H7a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2zm-7-2a2 2 0 0 1 4 0v2h-4z"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1A7 7 0 0 0 19 11z"/></symbol>
+  <symbol id="i-flip" viewBox="0 0 24 24"><path d="M20 5h-3.2L15 3H9L7.2 5H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm-8 13a5 5 0 0 1-4.6-3H9l-2.5-3L4 15h1.3A7 7 0 0 0 12 20zm6.7-5A7 7 0 0 0 12 6v2a5 5 0 0 1 4.6 3H15l2.5 3 2.5-3z"/></symbol>
+  <symbol id="i-end" viewBox="0 0 24 24"><path d="M12 9c-1.6 0-3.2.3-4.6.7v3.1c0 .4-.2.7-.6.9-1 .5-1.9 1.1-2.6 1.8a1 1 0 0 1-1.4 0L.3 13a1 1 0 0 1 0-1.4C3.4 8.7 7.5 7 12 7s8.6 1.7 11.7 4.6a1 1 0 0 1 0 1.4l-2.5 2.5a1 1 0 0 1-1.4 0 11 11 0 0 0-2.6-1.8.9.9 0 0 1-.6-.9V9.7C15.2 9.3 13.6 9 12 9z"/></symbol>
+  <symbol id="i-in" viewBox="0 0 24 24"><path d="M20 5.4 18.6 4 7 15.6V9H5v10h10v-2H8.4z"/></symbol>
+  <symbol id="i-out" viewBox="0 0 24 24"><path d="M9 5v2h6.6L4 18.6 5.4 20 17 8.4V15h2V5z"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><path d="M15.5 14h-.8l-.3-.3A6.5 6.5 0 1 0 14 15.5l.3.3v.8l5 5 1.5-1.5zm-6 0a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9z"/></symbol>
+</svg>
+
+<!-- Вход / регистрация -->
+<section id="auth" class="full">
+  <div class="authbox">
+    <img src="/logo.png" class="biglogo" alt="">
+    <h1>Heraxos</h1>
+    <p class="mute">Защищённые звонки и сообщения</p>
+    <div class="seg"><button id="tLogin" class="on">Вход</button><button id="tReg">Регистрация</button></div>
+
+    <form id="fLogin" autocomplete="on" onsubmit="return false">
+      <input id="login" name="username" placeholder="Логин" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="username">
+      <div class="pw"><input id="pass" name="password" type="password" placeholder="Пароль" autocomplete="current-password"><button type="button" class="eye" data-for="pass">👁</button></div>
+      <button class="btn" id="bLogin" type="submit">Войти</button>
+    </form>
+
+    <form id="fReg" autocomplete="off" onsubmit="return false" hidden>
+      <input id="rLogin" placeholder="Придумайте логин" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="off" data-lpignore="true">
+      <div class="pw"><input id="rPass" type="text" class="secret" placeholder="Придумайте пароль (от 6 символов)" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="off" data-lpignore="true"><button type="button" class="eye" data-for="rPass">👁</button></div>
+      <div class="pw"><input id="rPass2" type="text" class="secret" placeholder="Повторите пароль" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="off" data-lpignore="true"></div>
+      <button class="btn" id="bReg" type="submit">Создать аккаунт</button>
+      <p class="mute small">Запомните пароль: он защищает ключ шифрования ваших сообщений.</p>
+    </form>
+
+    <div class="err" id="aerr"></div>
+    <a class="androidOnly apkbtn" href="https://github.com/Arthuralend/Heraxos/releases/latest/download/Heraxos.apk">🤖 Скачать приложение для Android</a>
+    <p class="mute small"><svg class="ic12"><use href="#i-lock"/></svg> Сообщения шифруются на устройстве. Никто, кроме собеседников, включая администратора, не может их прочитать.</p>
+  </div>
+</section>
+
+<div id="app">
+  <!-- Левая колонка -->
+  <aside id="side">
+    <div class="tab-page on" data-tab="chats">
+      <header class="bighead"><h2>Чаты</h2></header>
+      <div class="searchbar"><svg><use href="#i-search"/></svg><input id="qChats" placeholder="Поиск"></div>
+      <div class="list" id="chatList"></div>
+    </div>
+    <div class="tab-page" data-tab="calls">
+      <header class="bighead"><h2>Звонки</h2></header>
+      <div class="list" id="callList"></div>
+    </div>
+    <div class="tab-page" data-tab="contacts">
+      <header class="bighead"><h2>Контакты</h2></header>
+      <form class="addbar" id="fAdd" autocomplete="off" onsubmit="return false">
+        <input id="addLogin" placeholder="Точный логин нового контакта" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="off">
+        <button class="addbtn" type="submit">Добавить</button>
+      </form>
+      <div class="list" id="userList"></div>
+    </div>
+    <div class="tab-page" data-tab="settings">
+      <header class="bighead"><h2>Настройки</h2></header>
+      <div class="list">
+        <div class="me-card"><div class="ava big" id="meAva"></div><div><b id="meName"></b><div class="mute" id="connState">подключение…</div></div></div>
+        <div class="group">
+          <div class="item" id="bPush"><span>🔔</span><div>Уведомления о звонках и сообщениях<small id="pushState"></small></div></div>
+          <div class="item"><span>🎥</span><div>Качество видео по умолчанию<small><select id="defQuality"><option value="low">Низкое (экономия трафика)</option><option value="medium">Среднее</option><option value="high">Высокое 720p</option><option value="hd">HD 1080p</option></select></small></div></div>
+          <a class="item androidOnly" href="https://github.com/Arthuralend/Heraxos/releases/latest/download/Heraxos.apk" style="color:inherit;text-decoration:none"><span>🤖</span><div>Приложение для Android<small>Звонок на весь экран с рингтоном и вибрацией</small></div></a>
+          <div class="item"><span>🔒</span><div>Шифрование<small>Сообщения: ECDH P-256 + AES-256-GCM, ключи только на устройствах. Звонки: DTLS-SRTP (WebRTC).</small></div></div>
+        </div>
+        <div class="group"><div class="item danger" id="bOut"><span>⎋</span><div>Выйти</div></div></div>
+        <p class="mute small center">Heraxos 1.0</p>
+      </div>
+    </div>
+    <nav id="tabbar">
+      <button data-tab="chats" class="on"><svg><use href="#i-chat"/></svg><span>Чаты</span><i id="unreadBadge"></i></button>
+      <button data-tab="calls"><svg><use href="#i-phone"/></svg><span>Звонки</span></button>
+      <button data-tab="contacts"><svg><use href="#i-people"/></svg><span>Контакты</span><i id="reqBadge"></i></button>
+      <button data-tab="settings"><svg><use href="#i-gear"/></svg><span>Настройки</span></button>
+    </nav>
+  </aside>
+
+  <!-- Переписка -->
+  <main id="chat">
+    <div class="empty" id="chatEmpty"><img src="/logo.png" alt=""><h3>Heraxos</h3><p class="mute">Выберите чат или контакт.<br><svg class="ic12"><use href="#i-lock"/></svg> Сквозное шифрование</p></div>
+    <header class="chathead" id="chatHead">
+      <button class="iconbtn" id="bBack"><svg><use href="#i-back"/></svg></button>
+      <div class="ava" id="cAva"></div>
+      <div class="who"><b id="cPeer"></b><small id="cStatus"></small></div>
+      <button class="iconbtn" id="bVideo"><svg><use href="#i-video"/></svg></button>
+      <button class="iconbtn" id="bAudio"><svg><use href="#i-phone"/></svg></button>
+    </header>
+    <div class="msgs" id="msgs"></div>
+    <footer class="composer" id="composer">
+      <textarea id="txt" rows="1" placeholder="Сообщение"></textarea>
+      <button class="sendbtn" id="bSend"><svg><use href="#i-send"/></svg></button>
+    </footer>
+  </main>
+</div>
+
+<!-- Звонок -->
+<section id="call">
+  <video id="remote" autoplay playsinline></video>
+  <video id="local" autoplay playsinline muted></video>
+  <div class="cinfo"><div class="ava huge" id="callAva"></div><b id="callName"></b><span id="callState"></span><small class="e2e"><svg class="ic12"><use href="#i-lock"/></svg> Зашифровано</small></div>
+  <div class="qbadge" id="qBadge"></div>
+  <div class="ctrl" id="ctrlIn">
+    <div><button class="round red" id="bDecline"><svg><use href="#i-end"/></svg></button><span>Отклонить</span></div>
+    <div><button class="round green" id="bAcceptA"><svg><use href="#i-phone"/></svg></button><span>Аудио</span></div>
+    <div id="wrapAcceptV"><button class="round green" id="bAcceptV"><svg><use href="#i-video"/></svg></button><span>Видео</span></div>
+  </div>
+  <div class="ctrl" id="ctrlOn">
+    <button class="round" id="bQuality" title="Качество видео">HD</button>
+    <button class="round" id="bCam"><svg><use href="#i-video"/></svg></button>
+    <button class="round" id="bFlip"><svg><use href="#i-flip"/></svg></button>
+    <button class="round" id="bMute"><svg><use href="#i-mic"/></svg></button>
+    <button class="round red" id="bHang"><svg><use href="#i-end"/></svg></button>
+  </div>
+  <div class="qmenu" id="qMenu">
+    <div data-q="low">Низкое · 360p</div><div data-q="medium">Среднее · 540p</div><div data-q="high">Высокое · 720p</div><div data-q="hd">HD · 1080p</div>
+  </div>
+</section>
+
+<div id="toast"></div>
+<audio id="ring" src="/ring.wav" loop preload="auto"></audio>
+<script src="/crypto.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
