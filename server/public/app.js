@@ -1,8 +1,9 @@
 // Heraxos — клиент
+const APP_VERSION = '4';
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 let token = localStorage.getItem('hx_token'), me = localStorage.getItem('hx_me');
-let ws, iceServers = [], users = [], chats = [], cur = null, call = null;
+let ws, iceServers = [], users = [], chats = [], cur = null, call = null, reloadAfterCall = false;
 const peerKeys = new Map(), online = new Set(), lastSeen = new Map();
 // Android-приложение Heraxos (WebView) даёт мост window.HeraxosAndroid
 const AND = window.HeraxosAndroid || null;
@@ -129,7 +130,7 @@ document.querySelectorAll('#tabbar button').forEach((b) => (b.onclick = () => {
 // ---------- WebSocket ----------
 function connect() {
   if (!token) return;
-  ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws?token=' + token);
+  ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws?token=' + token + '&v=' + APP_VERSION);
   ws.onopen = () => { $('connState').textContent = 'в сети'; };
   ws.onclose = (e) => { $('connState').textContent = 'нет соединения…'; if (e.code === 4001) return logout(true); if (token) setTimeout(connect, 2000); };
   ws.onmessage = (e) => onWS(JSON.parse(e.data));
@@ -143,6 +144,9 @@ document.addEventListener('visibilitychange', () => {
 
 async function onWS(m) {
   switch (m.type) {
+    case 'reload': // на сервере новая версия приложения
+      if (call) { reloadAfterCall = true; return; }
+      return location.reload();
     case 'msg': return onMessage(m);
     case 'sent': return onSent(m);
     case 'read':
@@ -707,6 +711,7 @@ function endCall(notify, delay = 0, noLog) {
     $('call').classList.remove('on', 'video-on', 'connected', 'multi', 'one-v');
     $('qMenu').classList.remove('on'); $('addSheet').classList.remove('on'); $('grid').innerHTML = '';
     renderCalls();
+    if (reloadAfterCall) location.reload();
   }, delay);
 }
 

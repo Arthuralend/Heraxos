@@ -50,7 +50,9 @@ const app = express();
 app.set('trust proxy', false);
 app.use(express.json({ limit: '256kb' }));
 app.use((req, res, next) => { res.set({ 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY' }); next(); });
-app.use(express.static(path.join(__dirname, 'public'), { maxAge: 0 }));
+// Версия веб-приложения: устаревшие клиенты получают команду перезагрузиться
+const APP_VERSION = '4';
+app.use(express.static(path.join(__dirname, 'public'), { maxAge: 0, etag: true, setHeaders: (res) => res.set('Cache-Control', 'no-cache') }));
 
 const attempts = new Map();
 function limited(key, max = 10) {
@@ -340,6 +342,7 @@ wss.on('connection', (ws, req) => {
   const q = new URL(req.url, 'http://x').searchParams, me = db.tokens[q.get('token')];
   if (!me || !db.users[me]) return ws.close(4001, 'auth');
   ws.bg = q.get('bg') === '1';
+  if (!ws.bg && q.get('v') !== APP_VERSION) ws.send(JSON.stringify({ type: 'reload' }));
   const was = isOnline(me);
   if (!online.has(me)) online.set(me, new Set());
   online.get(me).add(ws);
