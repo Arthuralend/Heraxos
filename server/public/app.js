@@ -9,7 +9,7 @@ const AND = window.HeraxosAndroid || null;
 if (/Android/i.test(navigator.userAgent) && !AND) document.documentElement.classList.add('is-android');
 const _qs = new URLSearchParams(location.search);
 let autoAnswer = _qs.get('answer') ? { id: _qs.get('call'), video: _qs.get('answer') === 'video' } : null;
-window.hxAnswer = (id, video) => { if (call && call.id === id && call.dir === 'in' && !call.pc) accept(!!video); else autoAnswer = { id, video: !!video }; };
+window.hxAnswer = (id, video) => { if (call && call.id === id && call.dir === 'ring') accept(!!video); else autoAnswer = { id, video: !!video }; };
 window.hxBack = () => { if (call) return true; if ($('qMenu').classList.contains('on')) { $('qMenu').classList.remove('on'); return true; } if (cur && !matchMedia('(min-width:800px)').matches) { closeChat(); return true; } return false; };
 
 // ---------- утилиты ----------
@@ -417,17 +417,16 @@ function renderCalls() {
   l.forEach((c) => {
     const missed = c.dir === 'missed', icon = c.dir === 'out' ? 'i-out' : 'i-in';
     const dur = c.dur ? ` · ${Math.floor(c.dur / 60)}:${pad(c.dur % 60)}` : '';
-    const label = { out: 'Исходящий', in: 'Входящий', missed: 'Пропущенный' }[c.dir] + (c.video ? ' видеозвонок' : ' звонок');
+    const label = ({ out: 'Исходящий', in: 'Входящий', missed: 'Пропущенный' }[c.dir] || 'Звонок') + (c.group ? ' групповой' : '') + (c.video ? ' видеозвонок' : ' звонок');
     const d = document.createElement('div'); d.className = 'row';
     d.innerHTML = `${avaHTML(c.peer)}<div class="body"><div class="top"><b class="${missed ? 'miss' : ''}">${esc(c.peer)}</b><time>${fmtList(c.ts)}</time></div>
       <div class="sub"><span><svg class="ic12 ${missed ? 'miss' : ''}" style="width:14px;height:14px"><use href="#${icon}"/></svg> ${label}${dur}</span></div></div>
       <div class="act"><button class="iconbtn"><svg><use href="#${c.video ? 'i-video' : 'i-phone'}"/></svg></button></div>`;
-    d.onclick = () => startCall(c.peer, c.video); L.appendChild(d);
+    d.onclick = () => { if (c.group) return toast('Групповой звонок: позвоните одному и добавьте остальных кнопкой «+»'); startCall(c.peer, c.video); }; L.appendChild(d);
   });
 }
 
-// ================= ЗВОНКИ =================
-// Качество видео: по умолчанию «среднее», можно повысить во время звонка
+// ================= ЗВОНКИ (1:1 и групповые до 5 человек, каждый с каждым) =================
 const Q = {
   low:    { w: 640,  h: 360,  fps: 24, br: 450_000,   label: '360p' },
   medium: { w: 960,  h: 540,  fps: 30, br: 1_000_000, label: '540p' },
@@ -435,8 +434,9 @@ const Q = {
   hd:     { w: 1920, h: 1080, fps: 30, br: 4_000_000, label: '1080p' },
 };
 // Звук: Opus 48 кГц, 128 кбит/с, FEC (устойчивость к потерям), без DTX
-const AUDIO = { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1, sampleRate: 48000, sampleSize: 16 };
+const AUDIO = { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1, sampleRate: 48000 };
 const AUDIO_BR = 128_000;
+const MAX_CALL = 5;
 
 function mungeOpus(sdp) {
   const m = sdp.match(/a=rtpmap:(\d+) opus\/48000\/2/i); if (!m) return sdp;
@@ -445,7 +445,6 @@ function mungeOpus(sdp) {
   return re.test(sdp) ? sdp.replace(re, `a=fmtp:${pt} ${want}`) : sdp.replace(m[0], `${m[0]}\r\na=fmtp:${pt} ${want}`);
 }
 async function setLocal(pc, desc) { await pc.setLocalDescription({ type: desc.type, sdp: mungeOpus(desc.sdp) }); }
-
 function preferCodecs(pc) {
   if (!window.RTCRtpReceiver || !RTCRtpReceiver.getCapabilities) return;
   for (const t of pc.getTransceivers()) {
@@ -456,83 +455,306 @@ function preferCodecs(pc) {
     try { t.setCodecPreferences([...caps.codecs].sort((a, b) => rank(a) - rank(b))); } catch {}
   }
 }
+const camConstraints = (q, facing) => ({ facingMode: facing || 'user', width: { ideal: Q[q].w }, height: { ideal: Q[q].h }, frameRate: { ideal: Q[q].fps } });
 
-async function getMedia(video) {
-  const q = Q[localStorage.getItem('hx_q') || 'medium'];
-  return navigator.mediaDevices.getUserMedia({
-    audio: AUDIO,
-    video: video ? { facingMode: 'user', width: { ideal: q.w }, height: { ideal: q.h }, frameRate: { ideal: q.fps } } : false,
-  });
+// ---------- звук: разговорный динамик / громкая связь ----------
+// Android-приложение: переключение через мост. iPhone (браузер): только режим «разговор», выбор вывода Apple не даёт.
+const canRoute = !!(AND && AND.setAudioRoute);
+function setRoute(r) {
+  if (!call) return; call.route = r;
+  if (canRoute) try { AND.setAudioRoute(r); } catch {}
+  $('bSpeaker').classList.toggle('on', r === 'speaker');
+  $('bSpeaker').innerHTML = `<svg><use href="#${r === 'speaker' ? 'i-spk' : 'i-ear'}"/></svg>`;
+  $('bSpeaker').title = r === 'speaker' ? 'Громкая связь' : 'Разговорный динамик';
+}
+function audioSessionCall() { try { if (navigator.audioSession) navigator.audioSession.type = 'play-and-record'; } catch {} }
+function audioSessionOff() { try { if (navigator.audioSession) navigator.audioSession.type = 'auto'; } catch {} }
+$('bSpeaker').onclick = () => { if (!call) return; call.routeManual = true; setRoute(call.route === 'speaker' ? 'earpiece' : 'speaker'); toast(call.route === 'speaker' ? 'Громкая связь' : 'Разговорный динамик', 1200); };
+
+// ---------- участники ----------
+const K = (l) => String(l).toLowerCase();
+function peerTile(login) {
+  const t = document.createElement('div'); t.className = 'tile'; t.dataset.p = K(login);
+  t.innerHTML = `<video autoplay playsinline muted></video><div class="tav"></div><div class="tname">${esc(login)}</div><audio autoplay></audio>`;
+  avatar(t.querySelector('.tav'), login);
+  $('grid').appendChild(t); return t;
+}
+function getPeer(login) { return call && call.peers.get(K(login)); }
+function newPeer(login) {
+  const pc = new RTCPeerConnection({ iceServers, bundlePolicy: 'max-bundle', rtcpMuxPolicy: 'require' });
+  const p = { login, pc, ice: [], video: false, tile: null, connected: false };
+  p.tile = call.pending.get(K(login)) || peerTile(login); p.tile.classList.remove('pend', 'joining'); call.pending.delete(K(login));
+  p.vEl = p.tile.querySelector('video'); p.aEl = p.tile.querySelector('audio');
+  pc.onicecandidate = (e) => e.candidate && send({ type: 'ice', id: call.id, to: login, candidate: e.candidate });
+  pc.ontrack = (e) => {
+    const tr = e.track;
+    if (tr.kind === 'audio') { p.aEl.srcObject = new MediaStream([tr]); p.aEl.play().catch(() => {}); }
+    else { p.vEl.srcObject = new MediaStream([tr]); p.vEl.play().catch(() => {}); tr.onunmute = tr.onmute = layout; }
+  };
+  pc.onconnectionstatechange = () => {
+    const st = pc.connectionState;
+    if (st === 'connected') {
+      p.connected = true;
+      if (!call.t0) { call.t0 = Date.now(); startTimer(); }
+      send({ type: 'media', id: call.id, video: localVideoOn() });
+      applySenderParams(p); layout();
+    }
+    if (st === 'failed') { pc.restartIce && pc.restartIce(); }
+    layout();
+  };
+  call.peers.set(K(login), p);
+  return p;
+}
+function closePeer(login) {
+  const p = getPeer(login); if (!p) return;
+  try { p.pc.close(); } catch {}
+  p.tile.remove(); call.peers.delete(K(login)); layout();
+}
+const localVideoOn = () => !!(call && call.stream && call.stream.getVideoTracks().some((t) => t.readyState === 'live' && t.enabled));
+
+// Инициатор (новый участник) создаёт предложение каждому
+async function offerTo(login) {
+  const p = newPeer(login), s = call.stream;
+  p.at = p.pc.addTransceiver(s.getAudioTracks()[0], { direction: 'sendrecv', streams: [s] });
+  p.vt = p.pc.addTransceiver(s.getVideoTracks()[0] || 'video', { direction: 'sendrecv', streams: [s] });
+  preferCodecs(p.pc);
+  await setLocal(p.pc, await p.pc.createOffer());
+  send({ type: 'offer', id: call.id, to: login, sdp: p.pc.localDescription });
+}
+async function answerFrom(login, sdp) {
+  const p = getPeer(login) || newPeer(login), s = call.stream;
+  await p.pc.setRemoteDescription(sdp);
+  for (const t of p.pc.getTransceivers()) {
+    const kind = t.receiver.track.kind; t.direction = 'sendrecv';
+    const tr = kind === 'audio' ? s.getAudioTracks()[0] : s.getVideoTracks()[0] || null;
+    await t.sender.replaceTrack(tr); try { t.sender.setStreams && t.sender.setStreams(s); } catch {}
+    if (kind === 'audio') p.at = t; else p.vt = t;
+  }
+  preferCodecs(p.pc);
+  await setLocal(p.pc, await p.pc.createAnswer());
+  send({ type: 'answer', id: call.id, to: login, sdp: p.pc.localDescription });
+  flushIce(p);
+}
+function flushIce(p) { p.ice.forEach((c) => p.pc.addIceCandidate(c).catch(() => {})); p.ice = []; }
+
+async function applySenderParams(only) {
+  if (!call) return;
+  const group = call.peers.size > 1, q = Q[call.q];
+  const vbr = group ? Math.min(q.br, 700_000) : q.br; // в группе экономим исходящий канал
+  for (const p of only ? [only] : call.peers.values()) for (const sd of p.pc.getSenders()) {
+    if (!sd.track) continue;
+    const prm = sd.getParameters(); if (!prm.encodings || !prm.encodings.length) prm.encodings = [{}];
+    if (sd.track.kind === 'audio') { prm.encodings[0].maxBitrate = AUDIO_BR; prm.encodings[0].priority = 'high'; prm.encodings[0].networkPriority = 'high'; }
+    else { prm.encodings[0].maxBitrate = vbr; prm.encodings[0].maxFramerate = q.fps; prm.degradationPreference = 'balanced'; }
+    try { await sd.setParameters(prm); } catch {}
+  }
 }
 
-function callUI(state) {
+// ---------- раскладка экрана ----------
+function layout() {
+  if (!call) return;
+  const peers = [...call.peers.values()], n = peers.length + call.pending.size;
+  for (const p of peers) {
+    const vt = p.vEl.srcObject && p.vEl.srcObject.getVideoTracks()[0];
+    const on = p.video && vt && !vt.muted;
+    p.tile.classList.toggle('v', !!on);
+    p.tile.classList.toggle('wait', !p.connected);
+  }
+  const anyV = peers.some((p) => p.tile.classList.contains('v'));
+  $('grid').dataset.n = Math.min(n, 4);
+  const c = $('call');
+  c.classList.toggle('multi', n >= 2);
+  c.classList.toggle('one-v', n === 1 && anyV);
+  c.classList.toggle('connected', peers.some((p) => p.connected));
+  c.classList.toggle('video-on', anyV);
+  const lv = localVideoOn();
+  $('local').style.display = lv ? 'block' : 'none';
+  $('bCam').classList.toggle('off', !lv);
+  $('bFlip').style.display = lv ? '' : 'none';
+  $('bQuality').style.display = lv || anyV ? '' : 'none';
+  $('bAdd').style.display = call.dir === 'ring' ? 'none' : '';
+  if (n <= 1) {
+    const who = peers[0] ? peers[0].login : [...call.pending.values()][0]?.dataset.name || call.title;
+    $('callName').textContent = who; avatar($('callAva'), who);
+  }
+}
+
+function showCallScreen(state) {
   const c = $('call'); c.classList.add('on');
-  c.classList.toggle('connected', state === 'connected');
   $('ctrlIn').classList.toggle('on', state === 'incoming');
   $('ctrlOn').classList.toggle('on', state !== 'incoming');
-  const v = call && call.video;
-  ['bQuality', 'bCam', 'bFlip'].forEach((id) => ($(id).style.display = v ? '' : 'none'));
+  $('bSpeaker').style.display = canRoute ? '' : 'none';
 }
+
+async function getMedia(video) {
+  return navigator.mediaDevices.getUserMedia({ audio: AUDIO, video: video ? camConstraints(call.q, call.facing) : false });
+}
+function newCall(o) {
+  call = Object.assign({ peers: new Map(), pending: new Map(), q: localStorage.getItem('hx_q') || 'medium', facing: 'user', route: 'earpiece' }, o);
+  $('grid').innerHTML = ''; $('cTimer').textContent = ''; $('qBadge').textContent = '';
+  $('call').classList.remove('video-on', 'connected', 'multi', 'one-v');
+  $('bMute').classList.remove('off'); $('bQuality').textContent = Q[call.q].label;
+}
+function pendingTile(login) {
+  if (call.pending.has(K(login)) || getPeer(login)) return;
+  const t = peerTile(login); t.classList.add('pend'); t.dataset.name = login; call.pending.set(K(login), t); layout();
+}
+function dropPending(login) { const t = call && call.pending.get(K(login)); if (t) { t.remove(); call.pending.delete(K(login)); layout(); } }
 
 async function startCall(peer, video) {
   if (call) return;
-  call = { peer, video, dir: 'out', pendingIce: [], q: localStorage.getItem('hx_q') || 'medium' };
-  $('callName').textContent = peer; avatar($('callAva'), peer); $('callState').textContent = 'Вызов…';
-  $('remote').srcObject = null; $('call').classList.remove('video-on'); callUI('outgoing');
+  newCall({ dir: 'out', title: peer, video0: video });
+  pendingTile(peer);
+  $('callState').textContent = 'Вызов…'; showCallScreen('outgoing'); layout();
+  audioSessionCall();
   try {
-    call.stream = await getMedia(video); showLocal();
+    call.stream = await getMedia(video);
+    showLocal(); setRoute(video ? 'speaker' : 'earpiece');
     send({ type: 'invite', to: peer, video });
   } catch (e) { toast('Нет доступа к микрофону/камере'); endCall(false); }
 }
+function showLocal() { $('local').srcObject = call.stream; layout(); }
 
-function showLocal() {
-  const v = call.video && call.stream.getVideoTracks().length;
-  $('local').srcObject = v ? call.stream : null; $('local').style.display = v ? 'block' : 'none';
-  if (v) { $('call').classList.add('video-on'); call.stream.getVideoTracks()[0].contentHint = 'motion'; }
-  $('bQuality').textContent = Q[call.q].label.replace('p', '');
+let timer;
+function startTimer() {
+  clearInterval(timer);
+  timer = setInterval(() => {
+    if (!call || !call.t0) return;
+    const s = Math.floor((Date.now() - call.t0) / 1000), t = `${Math.floor(s / 60)}:${pad(s % 60)}`;
+    $('cTimer').textContent = t; if (call.peers.size <= 1) $('callState').textContent = t;
+    if (s % 3 === 0) updateQBadge();
+  }, 1000);
 }
 
-function makePC() {
-  const pc = new RTCPeerConnection({ iceServers, bundlePolicy: 'max-bundle', rtcpMuxPolicy: 'require' });
-  call.stream.getTracks().forEach((t) => pc.addTrack(t, call.stream));
-  if (!call.stream.getVideoTracks().length && call.remoteVideo) pc.addTransceiver('video', { direction: 'recvonly' });
-  preferCodecs(pc);
-  pc.onicecandidate = (e) => e.candidate && send({ type: 'ice', id: call.id, candidate: e.candidate });
-  pc.ontrack = (e) => {
-    $('remote').srcObject = e.streams[0] || new MediaStream([e.track]);
-    if (e.track.kind === 'video') {
-      const on = () => $('call').classList.add('video-on'), off = () => !call?.video && $('call').classList.remove('video-on');
-      e.track.onunmute = on; e.track.onmute = off; e.track.onended = off; if (!e.track.muted) on();
+async function onSignal(m) {
+  switch (m.type) {
+    case 'invite': {
+      if (call) { if (call.id !== m.id) send({ type: 'reject', id: m.id, reason: 'busy' }); return; }
+      const others = (m.members || []).filter((x) => K(x) !== K(m.from));
+      newCall({ id: m.id, dir: 'ring', title: m.from, offerVideo: m.video });
+      $('callName').textContent = m.from; avatar($('callAva'), m.from);
+      $('callState').textContent = others.length ? `Групповой звонок · ещё ${others.join(', ')}` : (m.video ? 'Видеозвонок Heraxos…' : 'Аудиозвонок Heraxos…');
+      $('wrapAcceptV').style.display = m.video ? '' : 'none';
+      showCallScreen('incoming'); layout();
+      if (autoAnswer && autoAnswer.id === m.id) { const v = autoAnswer.video; autoAnswer = null; accept(v && m.video); }
+      else ring(true);
+      return;
     }
-  };
-  pc.onconnectionstatechange = () => {
-    const s = pc.connectionState;
-    if (s === 'connected') { if (!call.t0) { call.t0 = Date.now(); startTimer(); } callUI('connected'); applySenderParams(); }
-    if (s === 'disconnected') $('callState').textContent = 'Переподключение…';
-    if (s === 'failed') { $('callState').textContent = 'Переподключение…'; pc.restartIce && pc.restartIce(); }
-  };
-  return pc;
-}
-
-async function applySenderParams() {
-  if (!call || !call.pc) return;
-  for (const s of call.pc.getSenders()) {
-    if (!s.track) continue;
-    const p = s.getParameters(); if (!p.encodings || !p.encodings.length) p.encodings = [{}];
-    if (s.track.kind === 'audio') { p.encodings[0].maxBitrate = AUDIO_BR; p.encodings[0].priority = 'high'; p.encodings[0].networkPriority = 'high'; }
-    else { p.encodings[0].maxBitrate = Q[call.q].br; p.encodings[0].maxFramerate = Q[call.q].fps; p.degradationPreference = 'balanced'; }
-    try { await s.setParameters(p); } catch (e) { console.warn('params', e); }
+    case 'calling': if (call && !call.id) { call.id = m.id; $('callState').textContent = 'Гудки…'; } return;
+    case 'error': toast(m.text, 3500); if (call && !call.id) endCall(false); return;
+  }
+  if (!call || call.id !== m.id) return;
+  switch (m.type) {
+    case 'room': // мы вошли: соединяемся со всеми, кто уже в звонке
+      $('callState').textContent = 'Соединение…';
+      for (const l of m.members) offerTo(l).catch((e) => console.warn(e));
+      layout(); break;
+    case 'ringing': pendingTile(m.login); break;
+    case 'joined': dropPending(m.login); if (!getPeer(m.login)) { pendingTile(m.login); call.pending.get(K(m.login)).classList.add('joining'); } $('callState').textContent = 'Соединение…'; break;
+    case 'offer': await answerFrom(m.from, m.sdp).catch((e) => console.warn(e)); break;
+    case 'answer': { const p = getPeer(m.from); if (p) { await p.pc.setRemoteDescription(m.sdp); flushIce(p); } break; }
+    case 'ice': { const p = getPeer(m.from); if (!p) return; if (p.pc.remoteDescription) p.pc.addIceCandidate(m.candidate).catch(() => {}); else p.ice.push(m.candidate); break; }
+    case 'media': {
+      const p = getPeer(m.from); if (p) { p.video = !!m.video; layout(); }
+      // собеседник включил видео — переходим на громкую связь (если вы сами не переключали)
+      if (m.video && !call.routeManual && call.route !== 'speaker') setRoute('speaker');
+      break;
+    }
+    case 'quality': setQuality(m.q, m.from); break;
+    case 'declined': dropPending(m.login); toast(m.reason === 'busy' ? `${m.login}: занято` : `${m.login} отклонил(а) звонок`); break;
+    case 'noanswer': dropPending(m.login); toast(`${m.login} не отвечает`); break;
+    case 'left': closePeer(m.login); dropPending(m.login); if (call.peers.size) toast(`${m.login} вышел(а) из звонка`); break;
+    case 'hangup': {
+      const r = m.reason;
+      if (call.dir === 'ring' && r !== 'elsewhere') call.dir = 'missed';
+      $('callState').textContent = { busy: 'Занято', rejected: 'Отклонено', noanswer: 'Нет ответа', elsewhere: 'Отвечено на другом устройстве', gone: 'Звонок уже завершён' }[r] || 'Звонок завершён';
+      $('call').classList.remove('connected', 'video-on', 'multi', 'one-v');
+      endCall(false, 1300, r === 'elsewhere');
+      break;
+    }
   }
 }
+
+async function accept(video) {
+  ring(false);
+  audioSessionCall();
+  try {
+    call.dir = 'in';
+    call.stream = await getMedia(video); showLocal();
+    setRoute(video || call.offerVideo ? 'speaker' : 'earpiece');
+    $('callState').textContent = 'Соединение…'; showCallScreen('active');
+    send({ type: 'accept', id: call.id });
+  } catch (e) { toast('Нет доступа к микрофону/камере'); send({ type: 'reject', id: call.id }); endCall(false); }
+}
+$('bAcceptA').onclick = () => accept(false);
+$('bAcceptV').onclick = () => accept(true);
+$('bDecline').onclick = () => { send({ type: 'reject', id: call.id }); call.dir = 'declined'; endCall(false); };
+$('bHang').onclick = () => endCall(true);
+
+function endCall(notify, delay = 0, noLog) {
+  ring(false); clearInterval(timer);
+  if (!call) return;
+  if (notify && call.id) send({ type: 'hangup', id: call.id });
+  const c = call; call = null;
+  const names = [...c.peers.values()].map((p) => p.login);
+  if (!noLog && c.dir !== 'declined') logCall({ peer: names.length ? names.join(', ') : c.title, video: !!(c.video0 || c.offerVideo), dir: c.dir === 'ring' ? 'missed' : c.dir, ts: Date.now(), dur: c.t0 ? Math.round((Date.now() - c.t0) / 1000) : 0, group: names.length > 1 });
+  for (const p of c.peers.values()) try { p.pc.close(); } catch {}
+  c.stream && c.stream.getTracks().forEach((t) => t.stop());
+  if (canRoute) try { AND.setAudioRoute('off'); } catch {}
+  audioSessionOff();
+  setTimeout(() => {
+    if (call) return;
+    $('call').classList.remove('on', 'video-on', 'connected', 'multi', 'one-v');
+    $('qMenu').classList.remove('on'); $('addSheet').classList.remove('on'); $('grid').innerHTML = '';
+    renderCalls();
+  }, delay);
+}
+
+// ---------- кнопки во время звонка ----------
+$('bMute').onclick = () => { const t = call && call.stream.getAudioTracks()[0]; if (!t) return; t.enabled = !t.enabled; $('bMute').classList.toggle('off', !t.enabled); };
+
+// Включить / выключить камеру в любой момент разговора (без переподключения)
+$('bCam').onclick = async () => {
+  if (!call || !call.stream) return;
+  const cur = call.stream.getVideoTracks()[0];
+  if (cur) {
+    cur.stop(); call.stream.removeTrack(cur);
+    for (const p of call.peers.values()) p.vt && p.vt.sender.replaceTrack(null).catch(() => {});
+  } else {
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ video: camConstraints(call.q, call.facing) });
+      const t = s.getVideoTracks()[0]; t.contentHint = 'motion'; call.stream.addTrack(t);
+      for (const p of call.peers.values()) if (p.vt) { await p.vt.sender.replaceTrack(t).catch(() => {}); p.vt.direction = 'sendrecv'; }
+      applySenderParams();
+      if (!call.routeManual && call.route !== 'speaker') setRoute('speaker');
+    } catch { return toast('Нет доступа к камере'); }
+  }
+  $('local').srcObject = call.stream; $('local').style.transform = call.facing === 'user' ? 'scaleX(-1)' : 'none';
+  send({ type: 'media', id: call.id, video: localVideoOn() });
+  layout();
+};
+
+$('bFlip').onclick = async () => {
+  if (!call || !localVideoOn()) return;
+  call.facing = call.facing === 'user' ? 'environment' : 'user';
+  const old = call.stream.getVideoTracks()[0]; old && old.stop();
+  try {
+    const s = await navigator.mediaDevices.getUserMedia({ video: { ...camConstraints(call.q, call.facing), facingMode: { exact: call.facing } } });
+    const t = s.getVideoTracks()[0];
+    call.stream.removeTrack(old); call.stream.addTrack(t);
+    for (const p of call.peers.values()) p.vt && (await p.vt.sender.replaceTrack(t).catch(() => {}));
+    $('local').srcObject = call.stream; $('local').style.transform = call.facing === 'user' ? 'scaleX(-1)' : 'none';
+  } catch { toast('Не удалось переключить камеру'); }
+};
 
 async function setQuality(q, fromPeer) {
   if (!call || !Q[q]) return;
   call.q = q;
   const t = call.stream && call.stream.getVideoTracks()[0];
-  if (t) try { await t.applyConstraints({ width: { ideal: Q[q].w }, height: { ideal: Q[q].h }, frameRate: { ideal: Q[q].fps } }); } catch {}
+  if (t) try { await t.applyConstraints(camConstraints(q, call.facing)); } catch {}
   await applySenderParams();
-  $('bQuality').textContent = Q[q].label.replace('p', '');
-  if (!fromPeer) send({ type: 'quality', id: call.id, q }); else toast('Собеседник выбрал качество ' + Q[q].label);
+  $('bQuality').textContent = Q[q].label;
+  if (!fromPeer) send({ type: 'quality', id: call.id, q }); else toast(`${fromPeer} выбрал(а) качество ${Q[q].label}`);
   setTimeout(updateQBadge, 1500);
 }
 $('bQuality').onclick = (e) => {
@@ -541,120 +763,38 @@ $('bQuality').onclick = (e) => {
   $('qMenu').classList.toggle('on');
 };
 document.querySelectorAll('#qMenu div').forEach((d) => (d.onclick = () => { $('qMenu').classList.remove('on'); setQuality(d.dataset.q); }));
-document.addEventListener('click', () => $('qMenu').classList.remove('on'));
+document.addEventListener('click', (e) => { if (!e.target.closest('#qMenu,#bQuality')) $('qMenu').classList.remove('on'); });
+
+// Добавить участника (конференция до 5 человек)
+$('bAdd').onclick = async () => {
+  if (!call || !call.id) return;
+  await loadUsers();
+  const inCall = new Set([...call.peers.keys(), ...call.pending.keys()]);
+  const free = users.filter((u) => !inCall.has(K(u.login)));
+  const L = $('addList'); L.innerHTML = '';
+  if (call.peers.size + call.pending.size + 1 >= MAX_CALL) L.innerHTML = '<div class="empty-list">В звонке уже 5 человек — это максимум</div>';
+  else if (!free.length) L.innerHTML = '<div class="empty-list">Все ваши контакты уже в звонке</div>';
+  else free.forEach((u) => {
+    const k = K(u.login), d = document.createElement('div'); d.className = 'row';
+    d.innerHTML = `${avaHTML(u.login, online.has(k))}<div class="body"><div class="top"><b>${esc(u.login)}</b></div><div class="sub"><span class="${online.has(k) ? 'on' : ''}">${esc(fmtSeen(k))}</span></div></div><div class="act"><button class="pill ok">Позвать</button></div>`;
+    d.onclick = () => { send({ type: 'invite', id: call.id, to: u.login, video: localVideoOn() }); $('addSheet').classList.remove('on'); toast('Вызываем ' + u.login + '…'); };
+    L.appendChild(d);
+  });
+  $('addSheet').classList.add('on');
+};
+$('bAddClose').onclick = () => $('addSheet').classList.remove('on');
 
 async function updateQBadge() {
-  if (!call || !call.pc) return;
-  let txt = '', rtt = '';
+  const p = call && [...call.peers.values()][0]; if (!p) return;
+  let v = '', rtt = '';
   try {
-    const st = await call.pc.getStats();
-    st.forEach((r) => {
-      if (r.type === 'inbound-rtp' && r.kind === 'video' && r.frameHeight) txt = `${r.frameHeight}p · ${Math.round(r.framesPerSecond || 0)} fps`;
+    (await p.pc.getStats()).forEach((r) => {
+      if (r.type === 'inbound-rtp' && r.kind === 'video' && r.frameHeight && p.video) v = `${r.frameHeight}p`;
       if (r.type === 'candidate-pair' && r.nominated && r.currentRoundTripTime != null) rtt = `${Math.round(r.currentRoundTripTime * 1000)} мс`;
-      if (r.type === 'inbound-rtp' && r.kind === 'audio' && !txt) txt = 'Opus HD';
     });
   } catch {}
-  $('qBadge').textContent = [txt, rtt].filter(Boolean).join(' · ');
+  $('qBadge').textContent = [v, rtt].filter(Boolean).join(' · ');
 }
-
-let timer;
-function startTimer() {
-  clearInterval(timer);
-  timer = setInterval(() => {
-    if (!call || !call.t0) return;
-    const s = Math.floor((Date.now() - call.t0) / 1000); $('callState').textContent = `${Math.floor(s / 60)}:${pad(s % 60)}`;
-    if (s % 3 === 0) updateQBadge();
-  }, 1000);
-}
-
-async function onSignal(m) {
-  switch (m.type) {
-    case 'invite':
-      if (call) { if (call.id !== m.id) send({ type: 'reject', id: m.id, reason: 'busy' }); return; }
-      call = { id: m.id, peer: m.from, video: m.video, remoteVideo: m.video, dir: 'in', pendingIce: [], q: localStorage.getItem('hx_q') || 'medium' };
-      $('callName').textContent = m.from; avatar($('callAva'), m.from);
-      $('callState').textContent = m.video ? 'Видеозвонок Heraxos…' : 'Аудиозвонок Heraxos…';
-      $('remote').srcObject = null; $('call').classList.remove('video-on');
-      $('wrapAcceptV').style.display = m.video ? '' : 'none';
-      callUI('incoming');
-      if (autoAnswer && autoAnswer.id === m.id) { const v = autoAnswer.video; autoAnswer = null; accept(v && m.video); }
-      else ring(true);
-      break;
-    case 'calling': if (call) { call.id = m.id; $('callState').textContent = 'Гудки…'; } break;
-    case 'accept':
-      if (!call || call.id !== m.id) return;
-      $('callState').textContent = 'Соединение…';
-      call.pc = makePC();
-      await setLocal(call.pc, await call.pc.createOffer());
-      send({ type: 'offer', id: call.id, sdp: call.pc.localDescription }); call.ready = true;
-      break;
-    case 'offer':
-      if (!call || call.id !== m.id) return;
-      await call.pc.setRemoteDescription(m.sdp);
-      await setLocal(call.pc, await call.pc.createAnswer());
-      send({ type: 'answer', id: call.id, sdp: call.pc.localDescription }); flushIce();
-      break;
-    case 'answer':
-      if (!call || call.id !== m.id) return;
-      await call.pc.setRemoteDescription(m.sdp); flushIce(); break;
-    case 'ice':
-      if (!call || call.id !== m.id) return;
-      if (call.pc && call.pc.remoteDescription) call.pc.addIceCandidate(m.candidate).catch(() => {});
-      else call.pendingIce.push(m.candidate);
-      break;
-    case 'quality': if (call && call.id === m.id) setQuality(m.q, true); break;
-    case 'reject': case 'hangup': {
-      if (!call || call.id !== m.id) return;
-      const r = m.reason;
-      if (call.dir === 'in' && !call.t0 && r !== 'elsewhere') call.dir = 'missed';
-      $('callState').textContent = r === 'busy' ? 'Занято' : m.type === 'reject' ? 'Отклонено' : r === 'noanswer' ? 'Нет ответа' : r === 'elsewhere' ? 'Отвечено на другом устройстве' : 'Звонок завершён';
-      endCall(false, 1300, r === 'elsewhere'); break;
-    }
-    case 'error': toast(m.text); endCall(false); break;
-  }
-}
-function flushIce() { call.pendingIce.forEach((c) => call.pc.addIceCandidate(c).catch(() => {})); call.pendingIce = []; }
-
-async function accept(video) {
-  ring(false);
-  try {
-    call.video = video; call.stream = await getMedia(video); showLocal();
-    $('callState').textContent = 'Соединение…'; callUI('outgoing');
-    call.pc = makePC(); send({ type: 'accept', id: call.id });
-  } catch (e) { toast('Нет доступа к микрофону/камере'); send({ type: 'reject', id: call.id }); endCall(false); }
-}
-$('bAcceptA').onclick = () => accept(false);
-$('bAcceptV').onclick = () => accept(true);
-$('bDecline').onclick = () => { send({ type: 'reject', id: call.id }); endCall(false); };
-$('bHang').onclick = () => endCall(true);
-
-function endCall(notify, delay = 0, noLog) {
-  ring(false); clearInterval(timer);
-  if (!call) return;
-  if (notify && call.id) send({ type: 'hangup', id: call.id });
-  const c = call; call = null;
-  if (!noLog) logCall({ peer: c.peer, video: !!(c.video || c.remoteVideo), dir: c.dir, ts: Date.now(), dur: c.t0 ? Math.round((Date.now() - c.t0) / 1000) : 0 });
-  c.pc && c.pc.close(); c.stream && c.stream.getTracks().forEach((t) => t.stop());
-  setTimeout(() => { if (!call) { $('call').classList.remove('on', 'video-on', 'connected'); $('qMenu').classList.remove('on'); renderCalls(); } }, delay);
-}
-
-$('bMute').onclick = () => { const t = call && call.stream.getAudioTracks()[0]; if (!t) return; t.enabled = !t.enabled; $('bMute').classList.toggle('off', !t.enabled); };
-$('bCam').onclick = () => { const t = call && call.stream.getVideoTracks()[0]; if (!t) return; t.enabled = !t.enabled; $('bCam').classList.toggle('off', !t.enabled); $('local').style.visibility = t.enabled ? 'visible' : 'hidden'; };
-let facing = 'user';
-$('bFlip').onclick = async () => {
-  if (!call || !call.video) return;
-  facing = facing === 'user' ? 'environment' : 'user';
-  const q = Q[call.q], old = call.stream.getVideoTracks()[0];
-  old && old.stop();
-  try {
-    const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { exact: facing }, width: { ideal: q.w }, height: { ideal: q.h } } });
-    const nt = s.getVideoTracks()[0];
-    const sender = call.pc && call.pc.getSenders().find((x) => x.track === old || (x.track && x.track.kind === 'video'));
-    sender && (await sender.replaceTrack(nt));
-    call.stream.removeTrack(old); call.stream.addTrack(nt);
-    $('local').srcObject = call.stream; $('local').style.transform = facing === 'user' ? 'scaleX(-1)' : 'none';
-  } catch { toast('Не удалось переключить камеру'); }
-};
 
 function clearCallNotes() {
   navigator.serviceWorker && navigator.serviceWorker.ready.then((r) => r.getNotifications().then((ns) => ns.forEach((n) => n.data && n.data.kind === 'call' && n.close()))).catch(() => {});
@@ -662,7 +802,7 @@ function clearCallNotes() {
 function ring(on) {
   clearCallNotes();
   const a = $('ring');
-  if (on) { a.currentTime = 0; a.play().catch(() => {}); navigator.vibrate && navigator.vibrate([500, 300, 500, 300, 500, 300, 500]); }
+  if (on) { a.currentTime = 0; a.play().catch(() => {}); navigator.vibrate && navigator.vibrate([800, 400, 800, 400, 800, 400, 800, 400, 800]); }
   else { a.pause(); navigator.vibrate && navigator.vibrate(0); }
 }
 

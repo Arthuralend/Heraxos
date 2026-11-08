@@ -181,6 +181,11 @@ class MainActivity : Activity() {
         }
 
         @JavascriptInterface
+        fun setAudioRoute(route: String) {
+            runOnUiThread { AudioRoute.set(this@MainActivity, route) }
+        }
+
+        @JavascriptInterface
         fun clearSession() {
             Prefs.clear(this@MainActivity)
             CallService.stop(applicationContext)
@@ -188,6 +193,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        AudioRoute.set(this, "off")
         (web.parent as? android.view.ViewGroup)?.removeView(web)
         web.visibility = View.GONE
         web.destroy()

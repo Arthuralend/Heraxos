@@ -155,12 +155,10 @@ form[hidden]{display:none}
 .sendbtn svg{width:20px;height:20px;margin-left:2px}
 
 /* ---------- звонок ---------- */
-#call{position:fixed;inset:0;z-index:10;display:none;color:#fff;overflow:hidden;
+#call{position:fixed;inset:0;z-index:10;display:none;color:#fff;overflow:hidden;overflow:clip;
   background:radial-gradient(700px 500px at 50% 25%,rgba(255,106,26,.28),transparent 65%),linear-gradient(#1a1410,#0b0b0d)}
 #call.on{display:block}
-#remote{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#000;display:none}
-#call.video-on #remote{display:block}
-#local{position:absolute;right:14px;top:calc(var(--sat) + 14px);width:108px;height:156px;object-fit:cover;border-radius:16px;background:#222;transform:scaleX(-1);display:none;z-index:2;
+#local{position:absolute;right:14px;top:calc(var(--sat) + 64px);width:108px;height:156px;object-fit:cover;border-radius:16px;background:#222;transform:scaleX(-1);display:none;z-index:2;
   box-shadow:0 6px 20px rgba(0,0,0,.5);border:1.5px solid rgba(255,255,255,.18)}
 .cinfo{position:absolute;left:0;right:0;top:calc(var(--sat) + 12%);text-align:center;z-index:1;text-shadow:0 1px 4px rgba(0,0,0,.5)}
 .cinfo b{display:block;font-size:30px;font-weight:700;letter-spacing:-.4px}
@@ -206,3 +204,45 @@ form[hidden]{display:none}
 .androidOnly{display:none!important}
 html.is-android .androidOnly{display:flex!important}
 .apkbtn{justify-content:center;margin:4px 0 6px;padding:12px;border-radius:14px;border:1px solid rgba(255,106,26,.35);color:var(--brand2);text-decoration:none;font-weight:600}
+
+/* ---------- звонок: сетка участников ---------- */
+#grid{position:absolute;inset:0;display:none;gap:6px;padding:calc(var(--sat) + 58px) 6px calc(var(--sab) + 118px);z-index:0}
+#call.multi #grid{display:grid;grid-template-columns:1fr;grid-auto-rows:1fr}
+#call.multi #grid[data-n="3"],#call.multi #grid[data-n="4"]{grid-template-columns:1fr 1fr}
+#call.multi #grid[data-n="3"] .tile:first-child{grid-column:1/3}
+@media (min-width:800px){#call.multi #grid[data-n="2"]{grid-template-columns:1fr 1fr}}
+#call.one-v #grid{display:block;padding:0}
+#call.one-v .tile{position:absolute;inset:0;border-radius:0}
+#call.one-v .tile:not(.v){display:none}
+.tile{position:relative;background:#18191d;border-radius:18px;overflow:hidden;display:flex;align-items:center;justify-content:center;border:1px solid rgba(255,255,255,.06);min-height:0}
+.tile video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:none;background:#000}
+.tile.v video{display:block}
+.tile .tav{width:76px;height:76px;border-radius:50%;display:grid;place-items:center;font-size:30px;font-weight:700;color:#fff}
+.tile.v .tav{display:none}
+.tile .tname{position:absolute;left:10px;bottom:10px;font-size:13px;font-weight:600;background:rgba(0,0,0,.45);backdrop-filter:blur(8px);padding:4px 9px;border-radius:9px}
+#call.one-v .tile .tname{display:none}
+.tile.pend{opacity:.6}
+.tile.pend .tname::after{content:" · вызов…";font-weight:400;opacity:.8}
+.tile.pend .tav,.tile.wait .tav{animation:pulse 1.8s infinite}
+.tile.joining .tname::after{content:" · соединение…"}
+#call.multi .cinfo,#call.one-v .cinfo{display:none}
+#call.multi .ava.huge{animation:none}
+
+.ctop{position:absolute;left:0;right:0;top:calc(var(--sat) + 10px);display:flex;align-items:center;gap:8px;padding:0 12px;z-index:5}
+.ctop .sp{flex:1}
+.ctimer{font-size:14px;font-weight:600;font-variant-numeric:tabular-nums;background:rgba(0,0,0,.35);backdrop-filter:blur(10px);padding:6px 10px;border-radius:10px;display:none}
+#call.multi .ctimer:not(:empty),#call.one-v .ctimer:not(:empty){display:inline-block}
+.ctop .qbadge{position:static;display:none}
+#call.connected .ctop .qbadge:not(:empty){display:inline-block}
+.chip{border:0;background:rgba(255,255,255,.14);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);color:#fff;height:38px;min-width:38px;padding:0 12px;border-radius:19px;font-weight:700;font-size:13px;display:inline-grid;place-items:center}
+.chip svg{width:20px;height:20px}
+#call:not(.on) .ctop,#call:has(#ctrlIn.on) .ctop{display:none}
+#bSpeaker.on{background:#fff;color:#111}
+.round.off{background:#fff;color:#111}
+#bCam.off{background:rgba(255,255,255,.14);color:#fff;position:relative}
+#bCam.off::after{content:"";position:absolute;width:30px;height:2.5px;background:#fff;transform:rotate(-45deg);border-radius:2px}
+
+.sheet{visibility:hidden;position:absolute;left:0;right:0;bottom:0;max-height:70%;background:rgba(24,25,29,.97);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border-radius:22px 22px 0 0;z-index:8;transform:translateY(105%);transition:transform .25s ease;display:flex;flex-direction:column;padding-bottom:calc(var(--sab) + 10px);border-top:1px solid rgba(255,255,255,.08)}
+.sheet.on{transform:none;visibility:visible}
+.sheet-h{display:flex;align-items:center;justify-content:space-between;padding:14px 10px 4px 18px;font-size:18px}
+#addList{overflow-y:auto}

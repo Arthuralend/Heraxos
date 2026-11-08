@@ -247,7 +247,7 @@ app.delete('/api/admin/users/:login', admin, (req, res) => {
 });
 
 // ---------- WebSocket ----------
-const online = new Map(), pending = new Map(), calls = new Map();
+const online = new Map(), pending = new Map();
 // «В сети» — только открытое приложение; фоновое соединение Android-службы (bg=1) не считается
 const isOnline = (k) => { const set = online.get(k); if (!set) return false; for (const w of set) if (!w.bg) return true; return false; };
 function sendTo(login, msg) {
@@ -264,26 +264,72 @@ async function pushTo(login, payload) {
   u.subs = keep; save();
 }
 
+// ---------- звонки: «комнаты» до 5 участников (каждый с каждым, P2P) ----------
+const MAX_CALL = 5;
+const rooms = new Map(); // id -> { members:Set, invited:Map(login -> {from, timer}), video, ever, reason }
+const roomSend = (r, msg, except) => { for (const k of r.members) if (k !== except) sendTo(k, msg); };
+
 // Повторяющиеся push-уведомления, пока идёт вызов (каждые ~3.5 с, до 45 с)
-const ringing = new Map(); // id -> {timer, from, to}
+const ringing = new Map(); // `${id}|${to}` -> {timer, from}
 function startRinging(id, from, to, video) {
-  let n = 0;
+  const key = id + '|' + to; let n = 0;
   const tick = () => {
-    if (!calls.has(id) || calls.get(id).accepted) return stopRinging(id, false);
+    const r = rooms.get(id);
+    if (!r || !r.invited.has(to)) return stopRinging(id, to, false);
     n++;
     pushTo(to, { kind: 'call', call: true, id, n, video, from: name(from),
       title: (video ? '📹 Видеозвонок' : '📞 Звонок') + ' · Heraxos', body: name(from) + ' звонит вам…' });
   };
   tick();
-  ringing.set(id, { timer: setInterval(tick, 3500), from, to });
+  ringing.set(key, { timer: setInterval(tick, 3500), from });
 }
-function stopRinging(id, missed) {
-  const r = ringing.get(id); if (!r) return;
-  clearInterval(r.timer); ringing.delete(id);
-  // Если не ответили — push «Пропущенный», он же убирает «звонящие» уведомления.
-  // Если ответили/отклонили — приложение открыто и само их уберёт.
-  if (missed) pushTo(r.to, { kind: 'missed', id, from: name(r.from), title: 'Пропущенный звонок', body: 'от ' + name(r.from) });
+function stopRinging(id, to, missed) {
+  const key = id + '|' + to, r = ringing.get(key); if (!r) return;
+  clearInterval(r.timer); ringing.delete(key);
+  if (missed) pushTo(to, { kind: 'missed', id, from: name(r.from), title: 'Пропущенный звонок', body: 'от ' + name(r.from) });
 }
+
+function inviteInto(id, r, from, to, video) {
+  const inv = { from };
+  r.invited.set(to, inv);
+  pending.set(to, { id, from, video, ts: Date.now() });
+  sendTo(to, { type: 'invite', id, from: name(from), video, members: [...r.members].map(name) });
+  roomSend(r, { type: 'ringing', id, login: name(to) });
+  startRinging(id, from, to, video);
+  inv.timer = setTimeout(() => {
+    if (rooms.get(id) !== r || r.invited.get(to) !== inv) return;
+    r.invited.delete(to); if (pending.get(to)?.id === id) pending.delete(to);
+    stopRinging(id, to, true);
+    sendTo(to, { type: 'hangup', id, reason: 'missed' });
+    roomSend(r, { type: 'noanswer', id, login: name(to) });
+    r.reason = 'noanswer'; maybeEnd(id);
+  }, 45000);
+}
+function dropInvite(id, r, login, missedPush) {
+  const inv = r.invited.get(login); if (!inv) return;
+  clearTimeout(inv.timer); r.invited.delete(login);
+  if (pending.get(login)?.id === id) pending.delete(login);
+  stopRinging(id, login, missedPush);
+}
+// Звонок заканчивается, когда в нём остался 1 человек и никого не вызывают
+function maybeEnd(id) {
+  const r = rooms.get(id); if (!r) return;
+  if (r.members.size === 0) {
+    for (const k of [...r.invited.keys()]) { dropInvite(id, r, k, true); sendTo(k, { type: 'hangup', id, reason: 'missed' }); }
+    rooms.delete(id); return;
+  }
+  if (r.members.size === 1 && r.invited.size === 0) {
+    for (const k of r.members) sendTo(k, { type: 'hangup', id, reason: r.ever ? 'ended' : (r.reason || 'noanswer') });
+    rooms.delete(id);
+  }
+}
+function leaveRoom(id, me) {
+  const r = rooms.get(id); if (!r || !r.members.has(me)) return;
+  r.members.delete(me);
+  roomSend(r, { type: 'left', id, login: name(me) });
+  maybeEnd(id);
+}
+const leaveTimers = new Map();
 
 const server = process.env.CERT
   ? https.createServer({ cert: fs.readFileSync(process.env.CERT), key: fs.readFileSync(process.env.KEY) }, app)
@@ -299,8 +345,12 @@ wss.on('connection', (ws, req) => {
   online.get(me).add(ws);
   if (!was && isOnline(me)) broadcastPresence(me, true);
   ws.isAlive = true; ws.on('pong', () => (ws.isAlive = true));
-  const p = pending.get(me);
-  if (p && Date.now() - p.ts < 45000) { ws.send(JSON.stringify({ type: 'invite', from: name(p.from), video: p.video, id: p.id })); if (!ws.bg) stopRinging(p.id, false); }
+  if (!ws.bg) { clearTimeout(leaveTimers.get(me)); leaveTimers.delete(me); }
+  const p = pending.get(me), pr = p && rooms.get(p.id);
+  if (pr && pr.invited.has(me)) {
+    ws.send(JSON.stringify({ type: 'invite', id: p.id, from: name(p.from), video: p.video, members: [...pr.members].map(name) }));
+    if (!ws.bg) stopRinging(p.id, me, false);
+  }
 
   ws.on('message', (raw) => {
     let m; try { m = JSON.parse(raw); } catch { return; }
@@ -319,30 +369,49 @@ wss.on('connection', (ws, req) => {
       }
       case 'typing': if (isContact(me, to)) sendTo(to, { type: 'typing', from: name(me) }); break;
       case 'invite': {
+        let id = m.id && String(m.id), r = id && rooms.get(id);
+        if (id && (!r || !r.members.has(me))) return;
         if (!isContact(me, to)) return ws.send(JSON.stringify({ type: 'error', text: 'Звонить можно только контактам' }));
-        const id = crypto.randomBytes(8).toString('hex');
-        calls.set(id, { a: me, b: to }); pending.set(to, { from: me, video: !!m.video, id, ts: Date.now() });
-        ws.send(JSON.stringify({ type: 'calling', id, to: name(to) }));
-        sendTo(to, { type: 'invite', from: name(me), video: !!m.video, id });
-        startRinging(id, me, to, !!m.video);
-        setTimeout(() => {
-          const c = calls.get(id); if (!c || c.accepted) return;
-          calls.delete(id); pending.delete(to); stopRinging(id, true);
-          sendTo(me, { type: 'hangup', id, reason: 'noanswer' }); sendTo(to, { type: 'hangup', id, reason: 'missed' });
-        }, 45000);
+        if (r && (r.members.has(to) || r.invited.has(to))) return;
+        if (r && r.members.size + r.invited.size >= MAX_CALL) return ws.send(JSON.stringify({ type: 'error', text: 'В звонке может быть не больше 5 человек' }));
+        if (!r) {
+          id = crypto.randomBytes(8).toString('hex');
+          r = { members: new Set([me]), invited: new Map(), video: !!m.video, ever: false, reason: '' };
+          rooms.set(id, r);
+          ws.send(JSON.stringify({ type: 'calling', id, to: name(to) }));
+        }
+        inviteInto(id, r, me, to, !!(m.video ?? r.video));
         break;
       }
-      case 'accept': case 'reject': case 'offer': case 'answer': case 'ice': case 'hangup': case 'quality': {
-        const c = calls.get(m.id); if (!c || (c.a !== me && c.b !== me)) return;
-        const other = c.a === me ? c.b : c.a;
-        if (m.type === 'accept') {
-          if (c.accepted) return; c.accepted = true; pending.delete(me);
-          for (const w of online.get(me) || []) if (w !== ws) w.send(JSON.stringify({ type: 'hangup', id: m.id, reason: 'elsewhere' }));
-        }
-        if (m.type === 'accept' || m.type === 'reject') stopRinging(m.id, false);
-        if (m.type === 'hangup' && !c.accepted) stopRinging(m.id, me === c.a); // звонящий положил трубку до ответа → пропущенный
-        if (m.type === 'reject' || m.type === 'hangup') { calls.delete(m.id); pending.delete(c.b); }
-        sendTo(other, { ...m, from: name(me), to: undefined });
+      case 'accept': {
+        const id = String(m.id), r = rooms.get(id);
+        if (!r || !r.invited.has(me)) return ws.send(JSON.stringify({ type: 'hangup', id, reason: 'gone' }));
+        dropInvite(id, r, me, false);
+        const existing = [...r.members].map(name);
+        r.members.add(me); r.ever = true;
+        ws.send(JSON.stringify({ type: 'room', id, members: existing }));
+        roomSend(r, { type: 'joined', id, login: name(me) }, me);
+        for (const w of online.get(me) || []) if (w !== ws) w.send(JSON.stringify({ type: 'hangup', id, reason: 'elsewhere' }));
+        break;
+      }
+      case 'reject': {
+        const id = String(m.id), r = rooms.get(id); if (!r || !r.invited.has(me)) return;
+        dropInvite(id, r, me, false);
+        for (const w of online.get(me) || []) if (w !== ws) w.send(JSON.stringify({ type: 'hangup', id, reason: 'elsewhere' }));
+        roomSend(r, { type: 'declined', id, login: name(me), reason: m.reason === 'busy' ? 'busy' : 'rejected' });
+        r.reason = m.reason === 'busy' ? 'busy' : 'rejected';
+        maybeEnd(id);
+        break;
+      }
+      case 'hangup': leaveRoom(String(m.id), me); break;
+      case 'offer': case 'answer': case 'ice': {
+        const r = rooms.get(String(m.id)); if (!r || !r.members.has(me) || !r.members.has(to)) return;
+        sendTo(to, { ...m, from: name(me), to: undefined });
+        break;
+      }
+      case 'media': case 'quality': {
+        const r = rooms.get(String(m.id)); if (!r || !r.members.has(me)) return;
+        roomSend(r, { ...m, from: name(me), to: undefined }, me);
         break;
       }
     }
@@ -350,7 +419,13 @@ wss.on('connection', (ws, req) => {
   ws.on('close', () => {
     const s = online.get(me); if (!s) return;
     const was = isOnline(me); s.delete(ws); if (!s.size) online.delete(me);
-    if (was && !isOnline(me)) { if (db.users[me]) { db.users[me].lastSeen = Date.now(); save(); } broadcastPresence(me, false); }
+    if (was && !isOnline(me)) {
+      if (db.users[me]) { db.users[me].lastSeen = Date.now(); save(); } broadcastPresence(me, false);
+      leaveTimers.set(me, setTimeout(() => {
+        leaveTimers.delete(me); if (isOnline(me)) return;
+        for (const [id, r] of rooms) if (r.members.has(me)) leaveRoom(id, me);
+      }, 20000));
+    }
   });
 });
 function broadcastPresence(login, on) {
