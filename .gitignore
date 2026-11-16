@@ -6,3 +6,4 @@ local.properties
 server/node_modules/
 server/data/
 server/.env
+.kotlin/
