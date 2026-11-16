@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-14  # отдельный пул машин: macos-15 бывает перегружен
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - name: XcodeGen
