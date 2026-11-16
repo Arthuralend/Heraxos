@@ -18,5 +18,10 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
 }
 
 enum Theme {
-    static let bg = UIColor(red: 0.055, green: 0.059, blue: 0.067, alpha: 1)
+    /// Кремовый фон в светлой теме, тёплый тёмно-серый — в тёмной
+    static let bg = UIColor { t in
+        t.userInterfaceStyle == .dark
+            ? UIColor(red: 0.149, green: 0.149, blue: 0.141, alpha: 1)   // #262624
+            : UIColor(red: 0.980, green: 0.976, blue: 0.961, alpha: 1)   // #FAF9F5
+    }
 }

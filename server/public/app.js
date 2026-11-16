@@ -1,8 +1,9 @@
 // Heraxos — клиент
-const APP_VERSION = '5';
+const APP_VERSION = '6';
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 let token = localStorage.getItem('hx_token'), me = localStorage.getItem('hx_me');
+const wasLoggedIn = !!token; // для «Что нового»: показываем только тем, кто уже пользовался приложением
 let ws, iceServers = [], users = [], chats = [], cur = null, call = null, reloadAfterCall = false;
 const peerKeys = new Map(), online = new Set(), lastSeen = new Map();
 // Android-приложение Heraxos (WebView) даёт мост window.HeraxosAndroid
@@ -11,10 +12,11 @@ if (/Android/i.test(navigator.userAgent) && !AND) document.documentElement.class
 const _qs = new URLSearchParams(location.search);
 let autoAnswer = _qs.get('answer') ? { id: _qs.get('call'), video: _qs.get('answer') === 'video' } : null;
 window.hxAnswer = (id, video) => { if (call && call.id === id && call.dir === 'ring') accept(!!video); else autoAnswer = { id, video: !!video }; };
-window.hxBack = () => { if (call) return true; if ($('qMenu').classList.contains('on')) { $('qMenu').classList.remove('on'); return true; } if (cur && !matchMedia('(min-width:800px)').matches) { closeChat(); return true; } return false; };
+window.hxHangup = () => { if (call) endCall(true); };
+window.hxBack = () => { if ($('info').classList.contains('on')) { $('info').classList.remove('on'); return true; } if (call) return true; if ($('qMenu').classList.contains('on')) { $('qMenu').classList.remove('on'); return true; } if (cur && !matchMedia('(min-width:800px)').matches) { closeChat(); return true; } return false; };
 
 // ---------- утилиты ----------
-const COLORS = ['#e57373', '#f06292', '#ba68c8', '#9575cd', '#7986cb', '#4fc3f7', '#4db6ac', '#81c784', '#ffb74d', '#a1887f', '#90a4ae', '#d81e1e'];
+const COLORS = ['#c96442', '#b5835a', '#8b6f47', '#6a8a82', '#7e8fb8', '#a26b8f', '#5e8c61', '#b8875a', '#8c7aa9', '#c17c74', '#6f8fa6', '#9a7b4f'];
 function avatar(el, login, isOnline) {
   let h = 0; for (const c of login) h = (h * 31 + c.charCodeAt(0)) | 0;
   el.style.background = COLORS[Math.abs(h) % COLORS.length];
@@ -105,7 +107,10 @@ async function start() {
   if (AND) try { AND.setSession(token, me); } catch {}
   $('auth').classList.remove('on'); $('app').classList.add('on');
   $('meName').textContent = me; avatar($('meAva'), me);
-  $('defQuality').value = localStorage.getItem('hx_q') || 'medium';
+  // с версии 6 по умолчанию 1080p (снижается автоматически только при слабом интернете)
+  if (localStorage.getItem('hx_q_v') !== '2') { localStorage.setItem('hx_q', 'hd'); localStorage.setItem('hx_q_v', '2'); }
+  $('defQuality').value = localStorage.getItem('hx_q') || 'hd';
+  checkAV1();
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/sw.js');
     navigator.serviceWorker.addEventListener('message', (e) => e.data && e.data.open && openChat(e.data.open));
@@ -116,6 +121,7 @@ async function start() {
   const q = _qs.get('chat');
   if (location.search) history.replaceState(null, '', '/');
   if (q) openChat(q);
+  showVersionInfo(); whatsNewOnce(); checkAppUpdate(false);
 }
 $('defQuality').onchange = (e) => localStorage.setItem('hx_q', e.target.value);
 
@@ -128,19 +134,43 @@ document.querySelectorAll('#tabbar button').forEach((b) => (b.onclick = () => {
 }));
 
 // ---------- WebSocket ----------
+let wsRetry = 1000, wsTimer;
 function connect() {
   if (!token) return;
-  ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws?token=' + token + '&v=' + APP_VERSION);
-  ws.onopen = () => { $('connState').textContent = 'в сети'; };
-  ws.onclose = (e) => { $('connState').textContent = 'нет соединения…'; if (e.code === 4001) return logout(true); if (token) setTimeout(connect, 2000); };
-  ws.onmessage = (e) => onWS(JSON.parse(e.data));
+  clearTimeout(wsTimer);
+  if (ws && ws.readyState <= 1) return;
+  const s = (ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws?token=' + token + '&v=' + APP_VERSION));
+  s.onopen = () => {
+    wsRetry = 1000; $('connState').textContent = 'в сети';
+    // сигнальное соединение вернулось — восстанавливаем звонок, если связь с кем-то потеряна
+    if (call) for (const p of call.peers.values()) if (p.lost) restartIce(p);
+  };
+  s.onclose = (e) => {
+    if (ws !== s) return;
+    $('connState').textContent = 'нет соединения…';
+    if (e.code === 4001) return logout(true);
+    if (token) { wsTimer = setTimeout(connect, wsRetry); wsRetry = Math.min(wsRetry * 2, 8000); }
+  };
+  s.onmessage = (e) => onWS(JSON.parse(e.data));
 }
 const send = (m) => { if (!ws || ws.readyState !== 1) return false; ws.send(JSON.stringify(m)); return true; };
 document.addEventListener('visibilitychange', () => {
   if (document.hidden || !token) return;
-  if (!ws || ws.readyState > 1) connect();
+  if (!ws || ws.readyState > 1) { wsRetry = 1000; connect(); }
+  if (call) for (const p of call.peers.values()) if (p.lost) restartIce(p);
   loadChats(); if (cur) markRead();
 });
+// Сменилась сеть (Wi-Fi ↔ мобильный интернет): сразу переподключаемся, не дожидаясь таймаутов
+function networkChanged() {
+  if (!token) return;
+  if (ws && ws.readyState === 1 && call) { /* сигналка жива — просто проверяем звонок */ }
+  else { try { ws && ws.close(); } catch {} ws = null; wsRetry = 1000; connect(); }
+  if (call) for (const p of call.peers.values()) if (p.pc.connectionState !== 'connected') { p.lost ||= Date.now(); restartIce(p); }
+}
+window.addEventListener('online', networkChanged);
+try { navigator.connection && navigator.connection.addEventListener('change', networkChanged); } catch {}
+// Приложение закрывают во время звонка — сразу сообщаем собеседнику
+window.addEventListener('pagehide', (e) => { if (call && call.id && !e.persisted) send({ type: 'hangup', id: call.id }); });
 
 async function onWS(m) {
   switch (m.type) {
@@ -432,14 +462,18 @@ function renderCalls() {
 
 // ================= ЗВОНКИ (1:1 и групповые до 5 человек, каждый с каждым) =================
 const Q = {
-  low:    { w: 640,  h: 360,  fps: 24, br: 450_000,   label: '360p' },
-  medium: { w: 960,  h: 540,  fps: 30, br: 1_000_000, label: '540p' },
-  high:   { w: 1280, h: 720,  fps: 30, br: 2_000_000, label: '720p' },
-  hd:     { w: 1920, h: 1080, fps: 30, br: 4_000_000, label: '1080p' },
+  low:    { w: 640,  h: 360,  fps: 24, br: 500_000,   label: '360p' },
+  medium: { w: 960,  h: 540,  fps: 30, br: 1_200_000, label: '540p' },
+  high:   { w: 1280, h: 720,  fps: 30, br: 2_500_000, label: '720p' },
+  hd:     { w: 1920, h: 1080, fps: 30, br: 4_500_000, label: '1080p' },
 };
-// Звук: Opus 48 кГц, 128 кбит/с, FEC (устойчивость к потерям), без DTX
+// Это ПОТОЛОК. Реальный битрейт WebRTC подбирает сам по скорости канала: при слабом интернете
+// сначала снижается битрейт, затем разрешение (частота кадров сохраняется), при хорошем — возвращается к 1080p.
+// Звук: Opus 48 кГц, 64 кбит/с (для голоса больше не слышно разницы, зато меньше потерь),
+// FEC + RED (повтор пакетов) — речь не «булькает» при потерях в мобильной сети.
 const AUDIO = { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1, sampleRate: 48000 };
-const AUDIO_BR = 128_000;
+const AUDIO_BR = 64_000;
+const VIDEO_START_KBPS = 1500; // стартуем сразу с хорошего качества, а не с 300 кбит/с
 const MAX_CALL = 5;
 
 function mungeOpus(sdp) {
@@ -448,15 +482,44 @@ function mungeOpus(sdp) {
   const re = new RegExp(`a=fmtp:${pt} .*`, 'i');
   return re.test(sdp) ? sdp.replace(re, `a=fmtp:${pt} ${want}`) : sdp.replace(m[0], `${m[0]}\r\na=fmtp:${pt} ${want}`);
 }
-async function setLocal(pc, desc) { await pc.setLocalDescription({ type: desc.type, sdp: mungeOpus(desc.sdp) }); }
+function mungeVideoStart(sdp) {
+  const pts = [], re = /a=rtpmap:(\d+) (VP8|VP9|H264|AV1)\/90000/gi; let m;
+  while ((m = re.exec(sdp))) pts.push(m[1]);
+  for (const pt of pts) {
+    const f = new RegExp(`a=fmtp:${pt} (.*)`);
+    if (f.test(sdp)) sdp = sdp.replace(f, (l, prm) => (/x-google-start-bitrate/.test(prm) ? l : `${l};x-google-start-bitrate=${VIDEO_START_KBPS}`));
+    else sdp = sdp.replace(new RegExp(`(a=rtpmap:${pt} [^\\r\\n]+)`), `$1\r\na=fmtp:${pt} x-google-start-bitrate=${VIDEO_START_KBPS}`);
+  }
+  return sdp;
+}
+async function setLocal(pc, desc) { await pc.setLocalDescription({ type: desc.type, sdp: mungeVideoStart(mungeOpus(desc.sdp)) }); }
+
+// AV1 — самый эффективный кодек (≈30% меньше трафика, чем у VP9, при той же картинке).
+// Предлагаем его, только если это устройство тянет AV1 в реальном времени; собеседник выберет AV1,
+// только если тоже его поддерживает — иначе автоматически VP9 → H.264 → VP8.
+let av1Ok = false;
+async function checkAV1() {
+  try {
+    const has = (c) => !!(c && c.codecs.some((x) => /^video\/AV1$/i.test(x.mimeType)));
+    if (!window.RTCRtpSender || !has(RTCRtpSender.getCapabilities('video')) || !has(RTCRtpReceiver.getCapabilities('video'))) return (av1Ok = false);
+    av1Ok = true;
+    if (navigator.mediaCapabilities && navigator.mediaCapabilities.encodingInfo) {
+      const i = await navigator.mediaCapabilities.encodingInfo({ type: 'webrtc', video: { contentType: 'video/AV1', width: 1280, height: 720, bitrate: 2_500_000, framerate: 30 } }).catch(() => null);
+      if (i && (!i.supported || !i.smooth)) av1Ok = false; // кодек есть, но телефон не успевает кодировать
+    }
+  } catch { av1Ok = false; }
+  return av1Ok;
+}
 function preferCodecs(pc) {
   if (!window.RTCRtpReceiver || !RTCRtpReceiver.getCapabilities) return;
   for (const t of pc.getTransceivers()) {
     const kind = t.receiver.track && t.receiver.track.kind; if (!kind || !t.setCodecPreferences) continue;
     const caps = RTCRtpReceiver.getCapabilities(kind); if (!caps) continue;
-    const order = kind === 'audio' ? ['audio/opus'] : ['video/VP9', 'video/H264', 'video/VP8'];
+    const order = kind === 'audio' ? ['audio/red', 'audio/opus'] : ['video/AV1', 'video/VP9', 'video/H264', 'video/VP8'];
     const rank = (c) => { const i = order.indexOf(c.mimeType); return i < 0 ? 99 : i; };
-    try { t.setCodecPreferences([...caps.codecs].sort((a, b) => rank(a) - rank(b))); } catch {}
+    let list = [...caps.codecs];
+    if (kind === 'video' && !av1Ok) list = list.filter((c) => !/^video\/AV1$/i.test(c.mimeType));
+    try { t.setCodecPreferences(list.sort((a, b) => rank(a) - rank(b))); } catch {}
   }
 }
 const camConstraints = (q, facing) => ({ facingMode: facing || 'user', width: { ideal: Q[q].w }, height: { ideal: Q[q].h }, frameRate: { ideal: Q[q].fps } });
@@ -496,21 +559,54 @@ function newPeer(login) {
     else { p.vEl.srcObject = new MediaStream([tr]); p.vEl.play().catch(() => {}); tr.onunmute = tr.onmute = layout; }
   };
   pc.onconnectionstatechange = () => {
+    if (!call || getPeer(login) !== p) return;
     const st = pc.connectionState;
     if (st === 'connected') {
-      p.connected = true;
+      p.connected = true; p.lost = 0; clearTimeout(p.rt); p.rt = null;
       if (!call.t0) { call.t0 = Date.now(); startTimer(); }
       send({ type: 'media', id: call.id, video: localVideoOn() });
-      applySenderParams(p); layout();
+      applySenderParams(p);
+    } else if (st === 'disconnected' || st === 'failed') {
+      // связь пропала (смена сети, туннель, лифт) — восстанавливаем, а не завершаем звонок
+      p.connected = false; p.lost ||= Date.now();
+      scheduleRestart(p, st === 'failed' ? 0 : 2500);
     }
-    if (st === 'failed') { pc.restartIce && pc.restartIce(); }
     layout();
   };
   call.peers.set(K(login), p);
   return p;
 }
+// ---------- восстановление соединения (ICE restart) ----------
+const RECOVER_MS = 60_000; // столько пытаемся восстановить связь, прежде чем завершить звонок
+function scheduleRestart(p, delay) {
+  if (p.rt) return;
+  p.rt = setTimeout(() => {
+    p.rt = null;
+    if (!call || getPeer(p.login) !== p || p.pc.connectionState === 'connected') return;
+    if (Date.now() - p.lost > RECOVER_MS) {
+      toast(`Связь с ${p.login} потеряна`, 3500); closePeer(p.login);
+      if (!call.peers.size && !call.pending.size) endCall(true);
+      return;
+    }
+    restartIce(p);
+    scheduleRestart(p, 8000); // повторяем, пока не соединимся
+  }, delay);
+}
+// Новое предложение делает одна сторона (у кого логин «меньше»), вторая просит её об этом — так предложения не сталкиваются
+async function restartIce(p) {
+  if (!call || getPeer(p.login) !== p) return;
+  if (!ws || ws.readyState !== 1) return; // сигнальное соединение вернётся — повторим в ws.onopen
+  if (K(me) > K(p.login)) return send({ type: 'reneg', id: call.id, to: p.login });
+  try {
+    if (p.pc.signalingState === 'have-local-offer') await p.pc.setLocalDescription({ type: 'rollback' }).catch(() => {});
+    if (p.pc.signalingState !== 'stable') return;
+    await setLocal(p.pc, await p.pc.createOffer({ iceRestart: true }));
+    send({ type: 'offer', id: call.id, to: p.login, sdp: p.pc.localDescription });
+  } catch (e) { console.warn('ice restart', e); }
+}
 function closePeer(login) {
   const p = getPeer(login); if (!p) return;
+  clearTimeout(p.rt);
   try { p.pc.close(); } catch {}
   p.tile.remove(); call.peers.delete(K(login)); layout();
 }
@@ -549,7 +645,7 @@ async function applySenderParams(only) {
     if (!sd.track) continue;
     const prm = sd.getParameters(); if (!prm.encodings || !prm.encodings.length) prm.encodings = [{}];
     if (sd.track.kind === 'audio') { prm.encodings[0].maxBitrate = AUDIO_BR; prm.encodings[0].priority = 'high'; prm.encodings[0].networkPriority = 'high'; }
-    else { prm.encodings[0].maxBitrate = vbr; prm.encodings[0].maxFramerate = q.fps; prm.degradationPreference = 'balanced'; }
+    else { prm.encodings[0].maxBitrate = vbr; prm.encodings[0].maxFramerate = q.fps; prm.encodings[0].scaleResolutionDownBy = 1; prm.degradationPreference = 'maintain-framerate'; }
     try { await sd.setParameters(prm); } catch {}
   }
 }
@@ -590,11 +686,16 @@ function showCallScreen(state) {
   $('bSpeaker').style.display = canRoute ? '' : 'none';
 }
 
+// Android: на время звонка служба получает права «микрофон/камера в фоне» — звонок не прерывается,
+// когда вы переключаетесь на другое приложение (Яндекс Карты и т.п.)
+function nativeCall(on) {
+  if (AND && AND.callState) try { AND.callState(!!on, !!on && localVideoOn(), (on && call && call.id) || ''); } catch {}
+}
 async function getMedia(video) {
   return navigator.mediaDevices.getUserMedia({ audio: AUDIO, video: video ? camConstraints(call.q, call.facing) : false });
 }
 function newCall(o) {
-  call = Object.assign({ peers: new Map(), pending: new Map(), q: localStorage.getItem('hx_q') || 'medium', facing: 'user', route: 'earpiece' }, o);
+  call = Object.assign({ peers: new Map(), pending: new Map(), q: localStorage.getItem('hx_q') || 'hd', facing: 'user', route: 'earpiece' }, o);
   $('grid').innerHTML = ''; $('cTimer').textContent = ''; $('qBadge').textContent = '';
   $('call').classList.remove('video-on', 'connected', 'multi', 'one-v');
   $('bMute').classList.remove('off'); $('bQuality').textContent = Q[call.q].label;
@@ -613,7 +714,7 @@ async function startCall(peer, video) {
   audioSessionCall();
   try {
     call.stream = await getMedia(video);
-    showLocal(); setRoute(video ? 'speaker' : 'earpiece');
+    showLocal(); setRoute(video ? 'speaker' : 'earpiece'); nativeCall(true);
     send({ type: 'invite', to: peer, video });
   } catch (e) { toast('Нет доступа к микрофону/камере'); endCall(false); }
 }
@@ -625,7 +726,8 @@ function startTimer() {
   timer = setInterval(() => {
     if (!call || !call.t0) return;
     const s = Math.floor((Date.now() - call.t0) / 1000), t = `${Math.floor(s / 60)}:${pad(s % 60)}`;
-    $('cTimer').textContent = t; if (call.peers.size <= 1) $('callState').textContent = t;
+    const lost = [...call.peers.values()].some((p) => p.lost);
+    $('cTimer').textContent = lost ? 'Переподключение…' : t; if (call.peers.size <= 1) $('callState').textContent = lost ? 'Переподключение…' : t;
     if (s % 3 === 0) updateQBadge();
   }, 1000);
 }
@@ -644,7 +746,7 @@ async function onSignal(m) {
       else ring(true);
       return;
     }
-    case 'calling': if (call && !call.id) { call.id = m.id; $('callState').textContent = 'Гудки…'; } return;
+    case 'calling': if (call && !call.id) { call.id = m.id; $('callState').textContent = 'Гудки…'; nativeCall(true); } return;
     case 'error': toast(m.text, 3500); if (call && !call.id) endCall(false); return;
   }
   if (!call || call.id !== m.id) return;
@@ -656,7 +758,8 @@ async function onSignal(m) {
     case 'ringing': pendingTile(m.login); break;
     case 'joined': dropPending(m.login); if (!getPeer(m.login)) { pendingTile(m.login); call.pending.get(K(m.login)).classList.add('joining'); } $('callState').textContent = 'Соединение…'; break;
     case 'offer': await answerFrom(m.from, m.sdp).catch((e) => console.warn(e)); break;
-    case 'answer': { const p = getPeer(m.from); if (p) { await p.pc.setRemoteDescription(m.sdp); flushIce(p); } break; }
+    case 'answer': { const p = getPeer(m.from); if (p && p.pc.signalingState === 'have-local-offer') { await p.pc.setRemoteDescription(m.sdp).catch((e) => console.warn(e)); flushIce(p); } break; }
+    case 'reneg': { const p = getPeer(m.from); if (p) { p.lost ||= Date.now(); restartIce(p); } break; }
     case 'ice': { const p = getPeer(m.from); if (!p) return; if (p.pc.remoteDescription) p.pc.addIceCandidate(m.candidate).catch(() => {}); else p.ice.push(m.candidate); break; }
     case 'media': {
       const p = getPeer(m.from); if (p) { p.video = !!m.video; layout(); }
@@ -685,7 +788,7 @@ async function accept(video) {
   try {
     call.dir = 'in';
     call.stream = await getMedia(video); showLocal();
-    setRoute(video || call.offerVideo ? 'speaker' : 'earpiece');
+    setRoute(video || call.offerVideo ? 'speaker' : 'earpiece'); nativeCall(true);
     $('callState').textContent = 'Соединение…'; showCallScreen('active');
     send({ type: 'accept', id: call.id });
   } catch (e) { toast('Нет доступа к микрофону/камере'); send({ type: 'reject', id: call.id }); endCall(false); }
@@ -702,9 +805,10 @@ function endCall(notify, delay = 0, noLog) {
   const c = call; call = null;
   const names = [...c.peers.values()].map((p) => p.login);
   if (!noLog && c.dir !== 'declined') logCall({ peer: names.length ? names.join(', ') : c.title, video: !!(c.video0 || c.offerVideo), dir: c.dir === 'ring' ? 'missed' : c.dir, ts: Date.now(), dur: c.t0 ? Math.round((Date.now() - c.t0) / 1000) : 0, group: names.length > 1 });
-  for (const p of c.peers.values()) try { p.pc.close(); } catch {}
+  for (const p of c.peers.values()) { clearTimeout(p.rt); try { p.pc.close(); } catch {} }
   c.stream && c.stream.getTracks().forEach((t) => t.stop());
   if (canRoute) try { AND.setAudioRoute('off'); } catch {}
+  nativeCall(false);
   audioSessionOff();
   setTimeout(() => {
     if (call) return;
@@ -736,7 +840,7 @@ $('bCam').onclick = async () => {
   }
   $('local').srcObject = call.stream; $('local').style.transform = call.facing === 'user' ? 'scaleX(-1)' : 'none';
   send({ type: 'media', id: call.id, video: localVideoOn() });
-  layout();
+  nativeCall(true); layout();
 };
 
 $('bFlip').onclick = async () => {
@@ -791,14 +895,18 @@ $('bAddClose').onclick = () => $('addSheet').classList.remove('on');
 
 async function updateQBadge() {
   const p = call && [...call.peers.values()][0]; if (!p) return;
-  let v = '', rtt = '';
+  let v = '', rtt = '', codec = '';
   try {
-    (await p.pc.getStats()).forEach((r) => {
-      if (r.type === 'inbound-rtp' && r.kind === 'video' && r.frameHeight && p.video) v = `${r.frameHeight}p`;
+    const st = await p.pc.getStats();
+    st.forEach((r) => {
+      if (r.type === 'inbound-rtp' && r.kind === 'video' && r.frameHeight && p.video) {
+        v = `${r.frameHeight}p`;
+        const c = r.codecId && st.get(r.codecId); if (c && c.mimeType) codec = c.mimeType.split('/')[1].toUpperCase();
+      }
       if (r.type === 'candidate-pair' && r.nominated && r.currentRoundTripTime != null) rtt = `${Math.round(r.currentRoundTripTime * 1000)} мс`;
     });
   } catch {}
-  $('qBadge').textContent = [v, rtt].filter(Boolean).join(' · ');
+  $('qBadge').textContent = [v, codec, rtt].filter(Boolean).join(' · ');
 }
 
 function clearCallNotes() {
@@ -809,6 +917,75 @@ function ring(on) {
   const a = $('ring');
   if (on) { a.currentTime = 0; a.play().catch(() => {}); navigator.vibrate && navigator.vibrate([800, 400, 800, 400, 800, 400, 800, 400, 800]); }
   else { a.pause(); navigator.vibrate && navigator.vibrate(0); }
+}
+
+// ---------- версии, обновления, «Что нового» ----------
+const REPO = 'Arthuralend/Heraxos';
+const APK_URL = `https://github.com/${REPO}/releases/latest/download/Heraxos.apk`;
+const WHATS_NEW = [
+  'Звонок не обрывается, когда вы сворачиваете приложение — например, переключаетесь на Яндекс Карты',
+  'Связь сама восстанавливается при смене сети (Wi-Fi ↔ мобильный интернет), без завершения звонка',
+  'Видео сразу в 1080p; качество снижается только при слабом интернете и возвращается, когда скорость растёт',
+  'Кодек AV1, если оба телефона его поддерживают: картинка чётче при том же трафике',
+  'Звук: защита от потерь пакетов (RED + FEC) — речь не «булькает» в мобильной сети',
+  'Новый тёплый дизайн, светлая и тёмная тема по настройкам телефона',
+  'Уведомление о новых версиях приложения прямо в «Настройках»',
+];
+const androidVersion = () => { try { return AND && AND.appVersion ? +AND.appVersion() || 0 : 0; } catch { return 0; } };
+function infoSheet(title, html, actions) {
+  $('infoTitle').textContent = title; $('infoBody').innerHTML = html;
+  const A = $('infoActs'); A.innerHTML = '';
+  for (const a of actions) {
+    const b = document.createElement(a.href ? 'a' : 'button');
+    b.className = 'btn' + (a.primary ? '' : ' ghost'); b.textContent = a.label;
+    if (a.href) { b.href = a.href; b.target = '_blank'; b.rel = 'noopener'; }
+    b.onclick = () => { $('info').classList.remove('on'); a.on && a.on(); };
+    A.appendChild(b);
+  }
+  $('info').classList.add('on');
+}
+$('info').onclick = (e) => { if (e.target === $('info')) $('info').classList.remove('on'); };
+const listHTML = (items) => '<ul class="notes">' + items.map((x) => `<li>${esc(x)}</li>`).join('') + '</ul>';
+function showWhatsNew() { infoSheet(`Что нового в Heraxos ${APP_VERSION}`, listHTML(WHATS_NEW), [{ label: 'Понятно', primary: true }]); }
+function whatsNewOnce() {
+  const seen = localStorage.getItem('hx_seen_ver');
+  localStorage.setItem('hx_seen_ver', APP_VERSION);
+  if (seen !== APP_VERSION && wasLoggedIn) setTimeout(showWhatsNew, 600);
+}
+$('bWhatsNew').onclick = showWhatsNew;
+function showVersionInfo() {
+  const av = androidVersion();
+  $('verLine').textContent = `Heraxos · веб-версия ${APP_VERSION}` + (av ? ` · Android 1.0.${av}` : '');
+}
+// Android-приложение: проверяем выпуск на GitHub (раз в 6 часов) и показываем, что изменилось
+function releaseNotes(body) {
+  const text = String(body || '').split(/\n-{3,}\s*\n/)[0];
+  return text.split('\n').map((l) => l.replace(/\*\*/g, '').trim()).filter((l) => /^[-*•]\s+/.test(l)).map((l) => l.replace(/^[-*•]\s+/, ''));
+}
+async function checkAppUpdate(manual) {
+  const av = androidVersion(); if (!av) return;
+  $('updRow').style.display = '';
+  let rel = null;
+  try { rel = JSON.parse(localStorage.getItem('hx_rel') || 'null'); } catch {}
+  if (manual || !rel || Date.now() - (rel.at || 0) > 6 * 3600e3) {
+    if (manual) $('updState').textContent = 'Проверяем…';
+    try {
+      const r = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, { headers: { Accept: 'application/vnd.github+json' } });
+      const j = await r.json();
+      const n = +((String(j.tag_name || '').match(/(\d+)$/) || [])[1] || 0);
+      if (n) { rel = { n, notes: releaseNotes(j.body), at: Date.now() }; localStorage.setItem('hx_rel', JSON.stringify(rel)); }
+    } catch {}
+  }
+  const has = rel && rel.n > av;
+  $('updState').textContent = has ? `Доступна версия 1.0.${rel.n} — нажмите, чтобы посмотреть` : rel ? `У вас последняя версия (1.0.${av})` : 'Не удалось проверить — нет связи с GitHub';
+  $('updRow').classList.toggle('hot', !!has);
+  $('setBadge').style.display = has ? 'block' : 'none';
+  const offer = () => infoSheet(`Доступна версия 1.0.${rel.n}`,
+    (rel.notes.length ? '<p class="mute">Что изменилось:</p>' + listHTML(rel.notes) : '<p class="mute">Новая версия приложения Heraxos.</p>') +
+    `<p class="mute small">У вас 1.0.${av}. Скачайте файл и откройте его — данные и вход сохранятся.</p>`,
+    [{ label: 'Скачать обновление', primary: true, href: APK_URL }, { label: 'Позже' }]);
+  $('updRow').onclick = () => (has ? offer() : checkAppUpdate(true));
+  if (has && localStorage.getItem('hx_upd_shown') !== String(rel.n) && !call) { localStorage.setItem('hx_upd_shown', String(rel.n)); setTimeout(offer, 1500); }
 }
 
 // ---------- старт ----------

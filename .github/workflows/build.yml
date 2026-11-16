@@ -28,12 +28,21 @@ jobs:
         with:
           name: Heraxos-apk
           path: Heraxos.apk
+      # Текст выпуска: список изменений из CHANGES.md (его показывает приложение в «Настройках → Обновление»)
+      - name: Описание выпуска
+        run: |
+          {
+            cat CHANGES.md
+            echo
+            echo '---'
+            echo
+            echo 'Скачайте **Heraxos.apk** ниже и откройте его на телефоне.'
+            echo 'Постоянная ссылка на последнюю версию: https://github.com/${{ github.repository }}/releases/latest/download/Heraxos.apk'
+          } > release-notes.md
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: v1.0.${{ github.run_number }}
           name: Heraxos для Android 1.0.${{ github.run_number }}
-          body: |
-            Скачайте **Heraxos.apk** ниже и откройте его на телефоне.
-            Постоянная ссылка на последнюю версию: https://github.com/${{ github.repository }}/releases/latest/download/Heraxos.apk
+          body_path: release-notes.md
           files: Heraxos.apk
           make_latest: true

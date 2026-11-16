@@ -9,6 +9,21 @@ enum AudioRoute {
         if route != "off" { DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { apply(route) } }
     }
 
+    /// Пока идёт звонок, просим у iOS время на работу в фоне (режим audio в Info.plist держит звук,
+    /// это дополнительно страхует сигнальное соединение при сворачивании приложения).
+    private static var bgTask: UIBackgroundTaskIdentifier = .invalid
+    static func keepAlive(_ on: Bool) {
+        DispatchQueue.main.async {
+            if on, bgTask == .invalid {
+                bgTask = UIApplication.shared.beginBackgroundTask(withName: "heraxos-call") {
+                    UIApplication.shared.endBackgroundTask(bgTask); bgTask = .invalid
+                }
+            } else if !on, bgTask != .invalid {
+                UIApplication.shared.endBackgroundTask(bgTask); bgTask = .invalid
+            }
+        }
+    }
+
     private static func apply(_ route: String) {
         let s = AVAudioSession.sharedInstance()
         if route == "off" {

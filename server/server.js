@@ -51,7 +51,7 @@ app.set('trust proxy', false);
 app.use(express.json({ limit: '256kb' }));
 app.use((req, res, next) => { res.set({ 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY' }); next(); });
 // Версия веб-приложения: устаревшие клиенты получают команду перезагрузиться
-const APP_VERSION = '5';
+const APP_VERSION = '6';
 app.use(express.static(path.join(__dirname, 'public'), { maxAge: 0, etag: true, setHeaders: (res) => res.set('Cache-Control', 'no-cache') }));
 
 const attempts = new Map();
@@ -348,7 +348,8 @@ wss.on('connection', (ws, req) => {
   online.get(me).add(ws);
   if (!was && isOnline(me)) broadcastPresence(me, true);
   ws.isAlive = true; ws.on('pong', () => (ws.isAlive = true));
-  if (!ws.bg) { clearTimeout(leaveTimers.get(me)); leaveTimers.delete(me); }
+  // любое соединение (в том числе фоновое соединение Android-службы) отменяет выход из звонка
+  clearTimeout(leaveTimers.get(me)); leaveTimers.delete(me);
   const p = pending.get(me), pr = p && rooms.get(p.id);
   if (pr && pr.invited.has(me)) {
     ws.send(JSON.stringify({ type: 'invite', id: p.id, from: name(p.from), video: p.video, members: [...pr.members].map(name) }));
@@ -407,7 +408,7 @@ wss.on('connection', (ws, req) => {
         break;
       }
       case 'hangup': leaveRoom(String(m.id), me); break;
-      case 'offer': case 'answer': case 'ice': {
+      case 'offer': case 'answer': case 'ice': case 'reneg': {
         const r = rooms.get(String(m.id)); if (!r || !r.members.has(me) || !r.members.has(to)) return;
         sendTo(to, { ...m, from: name(me), to: undefined });
         break;
@@ -424,10 +425,16 @@ wss.on('connection', (ws, req) => {
     const was = isOnline(me); s.delete(ws); if (!s.size) online.delete(me);
     if (was && !isOnline(me)) {
       if (db.users[me]) { db.users[me].lastSeen = Date.now(); save(); } broadcastPresence(me, false);
+    }
+    // Свернутое приложение (Яндекс Карты и т.п.) часто теряет соединение страницы, но сам звонок идёт напрямую
+    // между телефонами. Поэтому из звонка выводим, только если у человека не осталось НИ ОДНОГО соединения
+    // (включая фоновое) дольше 60 секунд. Завершённый с телефона звонок закрывается сообщением hangup сразу.
+    if (!online.has(me) && [...rooms.values()].some((r) => r.members.has(me))) {
+      clearTimeout(leaveTimers.get(me));
       leaveTimers.set(me, setTimeout(() => {
-        leaveTimers.delete(me); if (isOnline(me)) return;
+        leaveTimers.delete(me); if (online.has(me)) return;
         for (const [id, r] of rooms) if (r.members.has(me)) leaveRoom(id, me);
-      }, 20000));
+      }, 60000));
     }
   });
 });

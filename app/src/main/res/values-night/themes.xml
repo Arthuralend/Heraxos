@@ -1,0 +1,18 @@
+<resources>
+    <style name="Hx" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/hx_bg</item>
+        <item name="android:statusBarColor">@color/hx_bg</item>
+        <item name="android:navigationBarColor">@color/hx_bg</item>
+        <item name="android:colorAccent">#FFD97757</item>
+        <item name="android:colorPrimary">#FFD97757</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+    <style name="Hx.Call" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#FF1A1918</item>
+        <item name="android:statusBarColor">#FF2B2A27</item>
+        <item name="android:navigationBarColor">#FF1A1918</item>
+        <item name="android:colorAccent">#FFD97757</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+    <color name="hx_bg">#FF262624</color>
+</resources>

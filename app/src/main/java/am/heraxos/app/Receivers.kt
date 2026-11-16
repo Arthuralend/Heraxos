@@ -6,9 +6,15 @@ import android.content.Intent
 
 /** Кнопка «Отклонить» в уведомлении звонка */
 class ActionReceiver : BroadcastReceiver() {
-    companion object { const val DECLINE = "am.heraxos.app.DECLINE" }
+    companion object {
+        const val DECLINE = "am.heraxos.app.DECLINE"
+        const val HANGUP = "am.heraxos.app.HANGUP"
+    }
     override fun onReceive(c: Context, i: Intent) {
-        if (i.action == DECLINE) CallService.instance?.decline(i.getStringExtra("id") ?: return)
+        when (i.action) {
+            DECLINE -> CallService.instance?.decline(i.getStringExtra("id") ?: return)
+            HANGUP -> CallService.instance?.hangupFromNotification()
+        }
     }
 }
 
