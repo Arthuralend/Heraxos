@@ -110,7 +110,6 @@ async function start() {
   // с версии 6 по умолчанию 1080p (снижается автоматически только при слабом интернете)
   if (localStorage.getItem('hx_q_v') !== '2') { localStorage.setItem('hx_q', 'hd'); localStorage.setItem('hx_q_v', '2'); }
   $('defQuality').value = localStorage.getItem('hx_q') || 'hd';
-  checkAV1();
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/sw.js');
     navigator.serviceWorker.addEventListener('message', (e) => e.data && e.data.open && openChat(e.data.open));
@@ -173,11 +172,21 @@ try { navigator.connection && navigator.connection.addEventListener('change', ne
 // простом сворачивании. Если человек действительно ушёл, сервер выведет его через 60 с без соединения,
 // а Android-приложение сообщает о закрытии само.
 
+// Перезагрузка на новую версию: адрес с меткой времени, чтобы браузер точно не взял старые файлы из кэша,
+// и не чаще раза в 2 минуты — защита от бесконечной перезагрузки
+function hardReload(v) {
+  try {
+    const last = +sessionStorage.getItem('hx_reload_at') || 0;
+    if (Date.now() - last < 120000) return toast('Доступна новая версия — закройте и откройте приложение', 5000);
+    sessionStorage.setItem('hx_reload_at', String(Date.now()));
+  } catch {}
+  location.replace('/?v=' + encodeURIComponent(v || '') + '&t=' + Date.now());
+}
 async function onWS(m) {
   switch (m.type) {
     case 'reload': // на сервере новая версия приложения
       if (call) { reloadAfterCall = true; return; }
-      return location.reload();
+      return hardReload(m.v);
     case 'msg': return onMessage(m);
     case 'sent': return onSent(m);
     case 'read':
@@ -498,16 +507,25 @@ async function setLocal(pc, desc) { await pc.setLocalDescription({ type: desc.ty
 // AV1 — самый эффективный кодек (≈30% меньше трафика, чем у VP9, при той же картинке).
 // Предлагаем его, только если это устройство тянет AV1 в реальном времени; собеседник выберет AV1,
 // только если тоже его поддерживает — иначе автоматически VP9 → H.264 → VP8.
-let av1Ok = false;
-async function checkAV1() {
+let av1Ok = false, av1Checked = null;
+// Safari (iPhone, iPad, Mac): AV1-кодировщика для звонков нет, а сама проверка на iPhone может сбоить — пропускаем
+const appleWebKit = /CriOS|FxiOS|EdgiOS/.test(navigator.userAgent) ||
+  (/AppleWebKit/.test(navigator.userAgent) && !/Chrome|Chromium|Android|Edg\//.test(navigator.userAgent));
+function checkAV1() {
+  if (!av1Checked) av1Checked = appleWebKit ? Promise.resolve(av1Ok = false)
+    : Promise.race([detectAV1(), new Promise((r) => setTimeout(() => r(av1Ok), 1500))]); // не ждём дольше 1,5 с
+  return av1Checked;
+}
+async function detectAV1() {
   try {
     const has = (c) => !!(c && c.codecs.some((x) => /^video\/AV1$/i.test(x.mimeType)));
     if (!window.RTCRtpSender || !has(RTCRtpSender.getCapabilities('video')) || !has(RTCRtpReceiver.getCapabilities('video'))) return (av1Ok = false);
-    av1Ok = true;
+    let ok = true;
     if (navigator.mediaCapabilities && navigator.mediaCapabilities.encodingInfo) {
       const i = await navigator.mediaCapabilities.encodingInfo({ type: 'webrtc', video: { contentType: 'video/AV1', width: 1280, height: 720, bitrate: 2_500_000, framerate: 30 } }).catch(() => null);
-      if (i && (!i.supported || !i.smooth)) av1Ok = false; // кодек есть, но телефон не успевает кодировать
+      if (i && (!i.supported || !i.smooth)) ok = false; // кодек есть, но телефон не успевает кодировать
     }
+    av1Ok = ok;
   } catch { av1Ok = false; }
   return av1Ok;
 }
@@ -715,7 +733,7 @@ async function startCall(peer, video) {
   $('callState').textContent = 'Вызов…'; showCallScreen('outgoing'); layout();
   audioSessionCall();
   try {
-    call.stream = await getMedia(video);
+    call.stream = await getMedia(video); await checkAV1();
     showLocal(); setRoute(video ? 'speaker' : 'earpiece'); nativeCall(true);
     send({ type: 'invite', to: peer, video });
   } catch (e) { toast('Нет доступа к микрофону/камере'); endCall(false); }
@@ -789,7 +807,7 @@ async function accept(video) {
   audioSessionCall();
   try {
     call.dir = 'in';
-    call.stream = await getMedia(video); showLocal();
+    call.stream = await getMedia(video); await checkAV1(); showLocal();
     setRoute(video || call.offerVideo ? 'speaker' : 'earpiece'); nativeCall(true);
     $('callState').textContent = 'Соединение…'; showCallScreen('active');
     send({ type: 'accept', id: call.id });
@@ -817,7 +835,7 @@ function endCall(notify, delay = 0, noLog) {
     $('call').classList.remove('on', 'video-on', 'connected', 'multi', 'one-v');
     $('qMenu').classList.remove('on'); $('addSheet').classList.remove('on'); $('grid').innerHTML = '';
     renderCalls();
-    if (reloadAfterCall) location.reload();
+    if (reloadAfterCall) hardReload();
   }, delay);
 }
 

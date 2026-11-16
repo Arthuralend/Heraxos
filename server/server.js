@@ -52,7 +52,9 @@ app.use(express.json({ limit: '256kb' }));
 app.use((req, res, next) => { res.set({ 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY' }); next(); });
 // Версия веб-приложения: устаревшие клиенты получают команду перезагрузиться
 const APP_VERSION = '6';
-app.use(express.static(path.join(__dirname, 'public'), { maxAge: 0, etag: true, setHeaders: (res) => res.set('Cache-Control', 'no-cache') }));
+// HTML/JS/CSS не кэшируются вовсе (Safari на iPhone иначе может держать старый app.js), картинки — с проверкой
+app.use(express.static(path.join(__dirname, 'public'), { maxAge: 0, etag: true, setHeaders: (res, file) =>
+  res.set('Cache-Control', /\.(html|js|css|json)$/.test(file) ? 'no-store, must-revalidate' : 'no-cache') }));
 
 const attempts = new Map();
 function limited(key, max = 10) {
@@ -332,6 +334,7 @@ function leaveRoom(id, me) {
   maybeEnd(id);
 }
 const leaveTimers = new Map();
+const reloadSent = new Map(); // token -> когда последний раз просили перезагрузиться
 
 const server = process.env.CERT
   ? https.createServer({ cert: fs.readFileSync(process.env.CERT), key: fs.readFileSync(process.env.KEY) }, app)
@@ -342,7 +345,12 @@ wss.on('connection', (ws, req) => {
   const q = new URL(req.url, 'http://x').searchParams, me = db.tokens[q.get('token')];
   if (!me || !db.users[me]) return ws.close(4001, 'auth');
   ws.bg = q.get('bg') === '1';
-  if (!ws.bg && q.get('v') !== APP_VERSION) ws.send(JSON.stringify({ type: 'reload' }));
+  // Устаревший клиент перезагружаем, но не чаще раза в 2 минуты — чтобы не было бесконечной перезагрузки,
+  // если браузер всё-таки отдал старый файл из кэша
+  if (!ws.bg && q.get('v') !== APP_VERSION) {
+    const key = q.get('token'), last = reloadSent.get(key) || 0;
+    if (Date.now() - last > 120000) { reloadSent.set(key, Date.now()); ws.send(JSON.stringify({ type: 'reload', v: APP_VERSION })); }
+  }
   const was = isOnline(me);
   if (!online.has(me)) online.set(me, new Set());
   online.get(me).add(ws);
