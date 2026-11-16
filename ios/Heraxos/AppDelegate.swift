@@ -1,6 +1,6 @@
 import UIKit
 
-/// Адрес сервера Heraxos
+/// Адрес сервера Ahazang
 let SERVER = URL(string: "https://82-26-86-235.sslip.io:8445/")!
 
 @main
@@ -18,5 +18,6 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
 }
 
 enum Theme {
-    static let bg = UIColor(red: 0.055, green: 0.059, blue: 0.067, alpha: 1)
+    /// Кремовый фон (светлая тема Ahazang)
+    static let bg = UIColor(red: 0.980, green: 0.976, blue: 0.961, alpha: 1)   // #FAF9F5
 }

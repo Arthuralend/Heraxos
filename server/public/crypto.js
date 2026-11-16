@@ -1,4 +1,4 @@
-// Heraxos E2E: ECDH P-256 → AES-256-GCM. Приватный ключ покидает устройство только зашифрованным паролем (PBKDF2-SHA256).
+// Ahazang E2E: ECDH P-256 → AES-256-GCM. Приватный ключ покидает устройство только зашифрованным паролем (PBKDF2-SHA256).
 const HX = (() => {
   const S = crypto.subtle, enc = new TextEncoder(), dec = new TextDecoder();
   const b64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));

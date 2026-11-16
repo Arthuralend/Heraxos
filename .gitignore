@@ -3,3 +3,7 @@ build/
 local.properties
 .idea/
 *.iml
+server/node_modules/
+server/data/
+server/.env
+.kotlin/

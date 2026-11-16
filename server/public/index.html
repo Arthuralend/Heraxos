@@ -3,16 +3,17 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
-<title>Heraxos</title>
+<title>Ahazang</title>
 <link rel="manifest" href="/manifest.json">
 <link rel="icon" href="/favicon.png">
 <link rel="apple-touch-icon" href="/icon-180.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Heraxos">
-<meta name="theme-color" content="#0e0f11">
-<link rel="stylesheet" href="/style.css?v=5">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Ahazang">
+<meta name="theme-color" content="#faf9f5">
+<meta name="color-scheme" content="light">
+<link rel="stylesheet" href="/style.css?v=7">
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute">
@@ -39,7 +40,7 @@
 <section id="auth" class="full">
   <div class="authbox">
     <img src="/logo.png" class="biglogo" alt="">
-    <h1>Heraxos</h1>
+    <h1>Ahazang</h1>
     <p class="mute">Защищённые звонки и сообщения</p>
     <div class="seg"><button id="tLogin" class="on">Вход</button><button id="tReg">Регистрация</button></div>
 
@@ -58,7 +59,7 @@
     </form>
 
     <div class="err" id="aerr"></div>
-    <a class="androidOnly apkbtn" href="https://github.com/Arthuralend/Heraxos/releases/latest/download/Heraxos.apk">🤖 Скачать приложение для Android</a>
+    <a class="androidOnly apkbtn" href="https://github.com/Arthuralend/Heraxos/releases/latest/download/Ahazang.apk">🤖 Скачать приложение для Android</a>
     <p class="mute small"><svg class="ic12"><use href="#i-lock"/></svg> Сообщения шифруются на устройстве. Никто, кроме собеседников, включая администратора, не может их прочитать.</p>
   </div>
 </section>
@@ -89,25 +90,29 @@
         <div class="me-card"><div class="ava big" id="meAva"></div><div><b id="meName"></b><div class="mute" id="connState">подключение…</div></div></div>
         <div class="group">
           <div class="item" id="bPush"><span>🔔</span><div>Уведомления о звонках и сообщениях<small id="pushState"></small></div></div>
-          <div class="item"><span>🎥</span><div>Качество видео по умолчанию<small><select id="defQuality"><option value="low">Низкое (экономия трафика)</option><option value="medium">Среднее</option><option value="high">Высокое 720p</option><option value="hd">HD 1080p</option></select></small></div></div>
-          <a class="item androidOnly" href="https://github.com/Arthuralend/Heraxos/releases/latest/download/Heraxos.apk" style="color:inherit;text-decoration:none"><span>🤖</span><div>Приложение для Android<small>Звонок на весь экран с рингтоном и вибрацией</small></div></a>
+          <div class="item"><span>🎥</span><div>Качество видео по умолчанию<small>Это максимум: при слабом интернете качество снижается само и возвращается, когда скорость растёт.<select id="defQuality"><option value="hd">1080p — авто (рекомендуется)</option><option value="high">720p</option><option value="medium">540p</option><option value="low">360p (экономия трафика)</option></select></small></div></div>
+          <a class="item androidOnly" href="https://github.com/Arthuralend/Heraxos/releases/latest/download/Ahazang.apk" style="color:inherit;text-decoration:none"><span>🤖</span><div>Приложение для Android<small>Звонок на весь экран с рингтоном и вибрацией</small></div></a>
           <div class="item"><span>🔒</span><div>Шифрование<small>Сообщения: ECDH P-256 + AES-256-GCM, ключи только на устройствах. Звонки: DTLS-SRTP (WebRTC).</small></div></div>
         </div>
+        <div class="group">
+          <div class="item" id="updRow" style="display:none"><span>⬆️</span><div>Обновление приложения<small id="updState">Проверяем…</small></div></div>
+          <div class="item" id="bWhatsNew"><span>✨</span><div>Что нового<small>Изменения в последней версии</small></div></div>
+        </div>
         <div class="group"><div class="item danger" id="bOut"><span>⎋</span><div>Выйти</div></div></div>
-        <p class="mute small center">Heraxos 1.0</p>
+        <p class="mute small center" id="verLine">Ahazang</p>
       </div>
     </div>
     <nav id="tabbar">
       <button data-tab="chats" class="on"><svg><use href="#i-chat"/></svg><span>Чаты</span><i id="unreadBadge"></i></button>
       <button data-tab="calls"><svg><use href="#i-phone"/></svg><span>Звонки</span></button>
       <button data-tab="contacts"><svg><use href="#i-people"/></svg><span>Контакты</span><i id="reqBadge"></i></button>
-      <button data-tab="settings"><svg><use href="#i-gear"/></svg><span>Настройки</span></button>
+      <button data-tab="settings"><svg><use href="#i-gear"/></svg><span>Настройки</span><i id="setBadge" class="dot"></i></button>
     </nav>
   </aside>
 
   <!-- Переписка -->
   <main id="chat">
-    <div class="empty" id="chatEmpty"><img src="/logo.png" alt=""><h3>Heraxos</h3><p class="mute">Выберите чат или контакт.<br><svg class="ic12"><use href="#i-lock"/></svg> Сквозное шифрование</p></div>
+    <div class="empty" id="chatEmpty"><img src="/logo.png" alt=""><h3>Ahazang</h3><p class="mute">Выберите чат или контакт.<br><svg class="ic12"><use href="#i-lock"/></svg> Сквозное шифрование</p></div>
     <header class="chathead" id="chatHead">
       <button class="iconbtn" id="bBack"><svg><use href="#i-back"/></svg></button>
       <div class="ava" id="cAva"></div>
@@ -148,7 +153,7 @@
     <button class="round red" id="bHang" title="Завершить"><svg><use href="#i-end"/></svg></button>
   </div>
   <div class="qmenu" id="qMenu">
-    <div data-q="low">Низкое · 360p</div><div data-q="medium">Среднее · 540p</div><div data-q="high">Высокое · 720p</div><div data-q="hd">HD · 1080p</div>
+    <div data-q="hd">1080p · авто</div><div data-q="high">720p</div><div data-q="medium">540p</div><div data-q="low">360p · экономия</div>
   </div>
   <div class="sheet" id="addSheet">
     <div class="sheet-h"><b>Добавить в звонок</b><button class="iconbtn" id="bAddClose">✕</button></div>
@@ -157,9 +162,30 @@
   </div>
 </section>
 
+<div class="modal" id="info"><div class="modal-box">
+  <h3 id="infoTitle"></h3><div id="infoBody"></div><div class="modal-acts" id="infoActs"></div>
+</div></div>
+
 <div id="toast"></div>
 <audio id="ring" src="/ring.wav" loop preload="auto"></audio>
-<script src="/crypto.js?v=5"></script>
-<script src="/app.js?v=5"></script>
+<script>
+// Диагностика: сообщает серверу о загрузках страницы и ошибках (видно в journalctl -u heraxos)
+(function () {
+  var n = 0; try { n = (+sessionStorage.getItem('hx_diag_n') || 0) + 1; sessionStorage.setItem('hx_diag_n', n); } catch (e) {}
+  function d(ev, info) {
+    try {
+      var nav = (performance.getEntriesByType && performance.getEntriesByType('navigation')[0]) || {};
+      var b = JSON.stringify({ ev: ev, info: String(info == null ? '' : info).slice(0, 600), n: n, nav: nav.type || '', url: location.pathname + location.search, ua: navigator.userAgent });
+      if (navigator.sendBeacon) navigator.sendBeacon('/api/diag', new Blob([b], { type: 'application/json' }));
+      else fetch('/api/diag', { method: 'POST', body: b, headers: { 'Content-Type': 'application/json' }, keepalive: true });
+    } catch (e) {}
+  }
+  window.hxDiag = d; d('load');
+  addEventListener('error', function (e) { d('error', (e.message || '') + ' @' + (e.filename || '') + ':' + (e.lineno || '') + ':' + (e.colno || '')); });
+  addEventListener('unhandledrejection', function (e) { var r = e.reason; d('reject', r && (r.stack || r.message) || r); });
+})();
+</script>
+<script src="/crypto.js?v=7"></script>
+<script src="/app.js?v=7"></script>
 </body>
 </html>

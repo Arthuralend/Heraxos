@@ -24,7 +24,15 @@ class MainActivity : Activity() {
 
     companion object {
         @Volatile var visible = false
+        @Volatile private var current: MainActivity? = null
         private val ID_RE = Regex("^[a-f0-9]{8,32}$")
+
+        /** Завершить звонок из уведомления: через веб-приложение, если оно открыто */
+        fun hangupInPage(): Boolean {
+            val a = current ?: return false
+            a.runOnUiThread { a.web.evaluateJavascript("window.hxHangup && hxHangup()", null) }
+            return true
+        }
     }
 
     private lateinit var web: WebView
@@ -34,8 +42,11 @@ class MainActivity : Activity() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        current = this
         web = WebView(this)
-        web.setBackgroundColor(0xFF0E0F11.toInt())
+        web.setBackgroundColor(0xFFFAF9F5.toInt())
+        // Страница со звонком не должна «засыпать», когда приложение свёрнуто (Яндекс Карты поверх и т.п.)
+        web.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false)
         setContentView(web)
 
         with(web.settings) {
@@ -185,6 +196,15 @@ class MainActivity : Activity() {
             runOnUiThread { AudioRoute.set(this@MainActivity, route) }
         }
 
+        /** Звонок начался / изменился (камера) / закончился */
+        @JavascriptInterface
+        fun callState(active: Boolean, video: Boolean, id: String) {
+            runOnUiThread { CallService.setCall(applicationContext, active, video, if (ID_RE.matches(id)) id else "") }
+        }
+
+        @JavascriptInterface
+        fun appVersion(): Int = BuildConfig.VERSION_CODE
+
         @JavascriptInterface
         fun clearSession() {
             Prefs.clear(this@MainActivity)
@@ -193,6 +213,12 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        if (current === this) current = null
+        // приложение закрыли во время звонка — сообщаем собеседнику сразу, а не через минуту
+        if (CallService.callActive) {
+            CallService.callId?.let { CallService.instance?.send(org.json.JSONObject().put("type", "hangup").put("id", it)) }
+            CallService.setCall(applicationContext, false, false, "")
+        }
         AudioRoute.set(this, "off")
         (web.parent as? android.view.ViewGroup)?.removeView(web)
         web.visibility = View.GONE

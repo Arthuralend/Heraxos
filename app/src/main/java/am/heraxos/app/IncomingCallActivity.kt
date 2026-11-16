@@ -48,13 +48,13 @@ class IncomingCallActivity : Activity() {
 
     private fun bind(i: Intent) {
         callId = i.getStringExtra("id") ?: ""
-        val from = i.getStringExtra("from") ?: "Heraxos"
+        val from = i.getStringExtra("from") ?: "Ahazang"
         val video = i.getBooleanExtra("video", false)
         if (CallService.instance?.currentCall != callId) { finish(); return }
 
         val root = FrameLayout(this).apply {
             background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf(0xFF3A1D0C.toInt(), 0xFF1A1410.toInt(), 0xFF0B0B0D.toInt()))
+                intArrayOf(0xFF4A2E22.toInt(), 0xFF2B2A27.toInt(), 0xFF1A1918.toInt()))
         }
 
         val top = LinearLayout(this).apply {
@@ -74,7 +74,7 @@ class IncomingCallActivity : Activity() {
             setPadding(0, dp(22), 0, dp(6))
         })
         top.addView(TextView(this).apply {
-            text = if (video) "Видеозвонок Heraxos…" else "Аудиозвонок Heraxos…"
+            text = if (video) "Видеозвонок Ahazang…" else "Аудиозвонок Ahazang…"
             setTextColor(0xCCFFFFFF.toInt()); textSize = 17f; gravity = Gravity.CENTER
         })
         top.addView(TextView(this).apply {
@@ -84,9 +84,9 @@ class IncomingCallActivity : Activity() {
         root.addView(top, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.TOP).apply { topMargin = dp(110) })
 
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
-        row.addView(button("✕", "Отклонить", 0xFFFF4D55.toInt()) { decline() })
-        row.addView(button("📞", "Ответить", 0xFF2FD36F.toInt()) { answer(false) })
-        if (video) row.addView(button("📹", "Видео", 0xFF2FD36F.toInt()) { answer(true) })
+        row.addView(button("✕", "Отклонить", 0xFFC8463D.toInt()) { decline() })
+        row.addView(button("📞", "Ответить", 0xFF4F9A62.toInt()) { answer(false) })
+        if (video) row.addView(button("📹", "Видео", 0xFF4F9A62.toInt()) { answer(true) })
         root.addView(row, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.BOTTOM).apply { bottomMargin = dp(70) })
 
         setContentView(root)
@@ -109,8 +109,8 @@ class IncomingCallActivity : Activity() {
     }
 
     private fun avatarColor(s: String): Int {
-        val colors = intArrayOf(0xFFE57373.toInt(), 0xFFBA68C8.toInt(), 0xFF7986CB.toInt(), 0xFF4FC3F7.toInt(),
-            0xFF4DB6AC.toInt(), 0xFF81C784.toInt(), 0xFFFFB74D.toInt(), 0xFF90A4AE.toInt(), 0xFFFF6A1A.toInt())
+        val colors = intArrayOf(0xFFC96442.toInt(), 0xFFB5835A.toInt(), 0xFF8B6F47.toInt(), 0xFF6A8A82.toInt(),
+            0xFF7E8FB8.toInt(), 0xFFA26B8F.toInt(), 0xFF5E8C61.toInt(), 0xFFB8875A.toInt(), 0xFF8C7AA9.toInt())
         var h = 0; for (c in s) h = h * 31 + c.code
         return colors[Math.floorMod(h, colors.size)]
     }

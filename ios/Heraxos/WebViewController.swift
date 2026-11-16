@@ -1,12 +1,12 @@
 import UIKit
 import WebKit
 
-/// Heraxos внутри приложения: тот же интерфейс, что на сайте, плюс нативное управление звуком звонка.
+/// Ahazang внутри приложения: тот же интерфейс, что на сайте, плюс нативное управление звуком звонка.
 final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDelegate, WKScriptMessageHandler {
 
     private var web: WKWebView!
 
-    override var preferredStatusBarStyle: UIStatusBarStyle { .lightContent }
+    override var preferredStatusBarStyle: UIStatusBarStyle { .default }
 
     override func loadView() {
         let cfg = WKWebViewConfiguration()
@@ -20,7 +20,8 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         window.HeraxosAndroid = {
           setSession: function(t, l) { window.webkit.messageHandlers.hx.postMessage({a: 'session', l: String(l)}); },
           clearSession: function() { window.webkit.messageHandlers.hx.postMessage({a: 'clear'}); },
-          setAudioRoute: function(r) { window.webkit.messageHandlers.hx.postMessage({a: 'route', r: String(r)}); }
+          setAudioRoute: function(r) { window.webkit.messageHandlers.hx.postMessage({a: 'route', r: String(r)}); },
+          callState: function(on, v, id) { window.webkit.messageHandlers.hx.postMessage({a: 'call', on: !!on}); }
         };
         """
         cfg.userContentController.addUserScript(WKUserScript(source: shim, injectionTime: .atDocumentStart, forMainFrameOnly: true))
@@ -79,6 +80,7 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         guard let d = message.body as? [String: Any], let a = d["a"] as? String else { return }
         switch a {
         case "route": AudioRoute.set(d["r"] as? String ?? "off")
+        case "call": AudioRoute.keepAlive(d["on"] as? Bool ?? false)
         case "session": UserDefaults.standard.set(d["l"] as? String, forKey: "login")
         case "clear": UserDefaults.standard.removeObject(forKey: "login")
         default: break

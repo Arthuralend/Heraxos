@@ -7,7 +7,10 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.Manifest
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.net.wifi.WifiManager
 import android.media.AudioAttributes
 import android.media.RingtoneManager
 import android.net.Uri
@@ -24,19 +27,35 @@ import okhttp3.WebSocketListener
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
-/** Фоновая служба: держит соединение с сервером Heraxos и показывает входящие звонки на весь экран. */
+/** Фоновая служба: держит соединение с сервером Ahazang и показывает входящие звонки на весь экран. */
 class CallService : Service() {
 
     companion object {
         const val CH_SERVICE = "hx_service"
         const val CH_CALL = "hx_call_v2"
         const val CH_MSG = "hx_msg"
+        const val CH_ONGOING = "hx_ongoing"
         const val NID_SERVICE = 1
         const val NID_CALL = 2
         const val NID_MISSED = 3
         val RING = longArrayOf(0, 900, 600, 900, 600, 900, 600)
 
         @Volatile var instance: CallService? = null
+
+        // Состояние текущего звонка (сообщает веб-приложение через мост)
+        @Volatile var callActive = false; private set
+        @Volatile var callVideo = false; private set
+        @Volatile var callId: String? = null; private set
+        private var callStarted = 0L
+
+        /** Звонок начался / изменился / закончился. Вызывается, пока приложение на экране. */
+        fun setCall(c: Context, active: Boolean, video: Boolean, id: String) {
+            if (active && !callActive) callStarted = System.currentTimeMillis()
+            callActive = active; callVideo = active && video
+            callId = if (active) id.ifEmpty { callId } else null
+            val s = instance
+            if (s != null) s.onCallChanged() else if (active) start(c)
+        }
 
         fun start(c: Context) {
             if (Prefs.token(c) == null) return
@@ -66,6 +85,8 @@ class CallService : Service() {
     private var currentFrom: String? = null
     private var currentVideo = false
     private val nm by lazy { getSystemService(NotificationManager::class.java) }
+    private var cpuLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -73,15 +94,87 @@ class CallService : Service() {
         super.onCreate()
         instance = this
         createChannels()
-        val n = Notification.Builder(this, CH_SERVICE)
+        applyForeground()
+        if (callActive) holdLocks(true)
+    }
+
+    private fun has(p: String) = checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
+
+    private fun serviceNote(): Notification {
+        if (!callActive) return Notification.Builder(this, CH_SERVICE)
             .setSmallIcon(R.drawable.ic_notif)
-            .setContentTitle("Heraxos")
+            .setContentTitle("Ahazang")
             .setContentText("Готов принимать звонки")
             .setOngoing(true)
             .setContentIntent(openApp(null, 10))
             .build()
-        if (Build.VERSION.SDK_INT >= 34) startForeground(NID_SERVICE, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING)
-        else startForeground(NID_SERVICE, n)
+        val hang = PendingIntent.getBroadcast(this, 24,
+            Intent(this, ActionReceiver::class.java).setAction(ActionReceiver.HANGUP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        return Notification.Builder(this, CH_ONGOING)
+            .setSmallIcon(R.drawable.ic_notif)
+            .setContentTitle(if (callVideo) "Идёт видеозвонок Ahazang" else "Идёт звонок Ahazang")
+            .setContentText("Нажмите, чтобы вернуться к звонку")
+            .setCategory(Notification.CATEGORY_CALL)
+            .setOngoing(true)
+            .setUsesChronometer(true)
+            .setWhen(callStarted)
+            .setShowWhen(true)
+            .setColor(0xFFC96442.toInt())
+            .setContentIntent(openApp(null, 11))
+            .addAction(Notification.Action.Builder(null, "Завершить", hang).build())
+            .build()
+    }
+
+    /**
+     * Тип фоновой службы. Во время звонка добавляем «микрофон» (и «камеру» при видео): без этого Android
+     * глушит микрофон и закрывает камеру, как только вы переключаетесь на другое приложение.
+     */
+    private fun applyForeground() {
+        val n = serviceNote()
+        if (Build.VERSION.SDK_INT < 30) { startForeground(NID_SERVICE, n); return }
+        val base = if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING else 0
+        var type = base
+        if (callActive && has(Manifest.permission.RECORD_AUDIO)) type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+        if (callActive && callVideo && has(Manifest.permission.CAMERA)) type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+        try { startForeground(NID_SERVICE, n, type) }
+        catch (e: Exception) {
+            // например, камеру нельзя запросить из фона — оставляем хотя бы микрофон / базовый режим
+            val mic = if (callActive && has(Manifest.permission.RECORD_AUDIO)) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0
+            runCatching { startForeground(NID_SERVICE, n, base or mic) }.onFailure { runCatching { startForeground(NID_SERVICE, n, base) } }
+        }
+    }
+
+    fun onCallChanged() {
+        applyForeground()
+        holdLocks(callActive)
+    }
+
+    /** Во время звонка процессор и Wi-Fi не засыпают (экран гаснет у уха, приложение может быть свёрнуто) */
+    @Suppress("DEPRECATION")
+    private fun holdLocks(on: Boolean) {
+        if (on) {
+            if (cpuLock == null) cpuLock = (getSystemService(Context.POWER_SERVICE) as PowerManager)
+                .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "heraxos:incall").apply { setReferenceCounted(false) }
+            cpuLock?.acquire(4 * 60 * 60 * 1000L)
+            if (wifiLock == null) runCatching {
+                val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+                val mode = if (Build.VERSION.SDK_INT >= 29) WifiManager.WIFI_MODE_FULL_LOW_LATENCY else WifiManager.WIFI_MODE_FULL_HIGH_PERF
+                wifiLock = wm.createWifiLock(mode, "heraxos:incall").apply { setReferenceCounted(false) }
+            }
+            runCatching { wifiLock?.acquire() }
+        } else {
+            runCatching { cpuLock?.let { if (it.isHeld) it.release() } }
+            runCatching { wifiLock?.let { if (it.isHeld) it.release() } }
+        }
+    }
+
+    /** Кнопка «Завершить» в уведомлении о звонке */
+    fun hangupFromNotification() {
+        val id = callId
+        if (MainActivity.hangupInPage()) return
+        if (id != null) send(JSONObject().put("type", "hangup").put("id", id))
+        setCall(this, false, false, "")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -93,6 +186,7 @@ class CallService : Service() {
 
     override fun onDestroy() {
         stopped = true
+        holdLocks(false)
         ws?.close(1000, "bye"); ws = null
         main.removeCallbacksAndMessages(null)
         cancelIncoming(false)
@@ -151,8 +245,8 @@ class CallService : Service() {
             "contacts" -> {
                 val r = m.optString("request")
                 val a = m.optString("accepted")
-                if (!MainActivity.visible && r.isNotEmpty()) notifyText("Heraxos", "$r хочет добавить вас в контакты", null)
-                if (!MainActivity.visible && a.isNotEmpty()) notifyText("Heraxos", "$a принял(а) вашу заявку", a)
+                if (!MainActivity.visible && r.isNotEmpty()) notifyText("Ahazang", "$r хочет добавить вас в контакты", null)
+                if (!MainActivity.visible && a.isNotEmpty()) notifyText("Ahazang", "$a принял(а) вашу заявку", a)
             }
         }
     }
@@ -177,13 +271,13 @@ class CallService : Service() {
         val b = Notification.Builder(this, CH_CALL)
             .setSmallIcon(R.drawable.ic_notif)
             .setContentTitle(from)
-            .setContentText(if (video) "Входящий видеозвонок Heraxos" else "Входящий звонок Heraxos")
+            .setContentText(if (video) "Входящий видеозвонок Ahazang" else "Входящий звонок Ahazang")
             .setCategory(Notification.CATEGORY_CALL)
             .setOngoing(true)
             .setAutoCancel(false)
             .setFullScreenIntent(fullPi, true)
             .setContentIntent(fullPi)
-            .setColor(0xFFFF6A1A.toInt())
+            .setColor(0xFFC96442.toInt())
             .setTimeoutAfter(50_000)
             .addAction(Notification.Action.Builder(null, "Отклонить", decline).build())
             .addAction(Notification.Action.Builder(null, "Ответить", answer).build())
@@ -221,7 +315,7 @@ class CallService : Service() {
                 .setContentTitle("Пропущенный звонок")
                 .setContentText("от $from")
                 .setAutoCancel(true)
-                .setColor(0xFFFF6A1A.toInt())
+                .setColor(0xFFC96442.toInt())
                 .setContentIntent(openApp(from, 30))
                 .build()
             nm.notify(NID_MISSED, n)
@@ -236,7 +330,7 @@ class CallService : Service() {
             .setContentText(text)
             .setAutoCancel(true)
             .setCategory(Notification.CATEGORY_MESSAGE)
-            .setColor(0xFFFF6A1A.toInt())
+            .setColor(0xFFC96442.toInt())
             .setContentIntent(openApp(chat, 40 + (chat?.hashCode() ?: 0) % 1000))
             .build()
         nm.notify(100 + ((chat ?: title).hashCode() and 0xffff), n)
@@ -284,6 +378,10 @@ class CallService : Service() {
             description = "Новые сообщения, заявки и пропущенные звонки"
             enableVibration(true)
         }
-        nm.createNotificationChannels(listOf(service, call, msg))
+        val ongoing = NotificationChannel(CH_ONGOING, "Текущий звонок", NotificationManager.IMPORTANCE_LOW).apply {
+            description = "Показывается, пока идёт разговор"
+            setShowBadge(false)
+        }
+        nm.createNotificationChannels(listOf(service, call, msg, ongoing))
     }
 }

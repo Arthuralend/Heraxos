@@ -1,4 +1,4 @@
-// Heraxos — сервер: аккаунты, зашифрованные чаты (E2E), сигнализация звонков, push, TURN, админ-кабинет
+// Ahazang — сервер: аккаунты, зашифрованные чаты (E2E), сигнализация звонков, push, TURN, админ-кабинет
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
@@ -51,8 +51,10 @@ app.set('trust proxy', false);
 app.use(express.json({ limit: '256kb' }));
 app.use((req, res, next) => { res.set({ 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY' }); next(); });
 // Версия веб-приложения: устаревшие клиенты получают команду перезагрузиться
-const APP_VERSION = '5';
-app.use(express.static(path.join(__dirname, 'public'), { maxAge: 0, etag: true, setHeaders: (res) => res.set('Cache-Control', 'no-cache') }));
+const APP_VERSION = '7';
+// HTML/JS/CSS не кэшируются вовсе (Safari на iPhone иначе может держать старый app.js), картинки — с проверкой
+app.use(express.static(path.join(__dirname, 'public'), { maxAge: 0, etag: true, setHeaders: (res, file) =>
+  res.set('Cache-Control', /\.(html|js|css|json)$/.test(file) ? 'no-store, must-revalidate' : 'no-cache') }));
 
 const attempts = new Map();
 function limited(key, max = 10) {
@@ -129,7 +131,7 @@ app.post('/api/contacts/add', auth, (req, res) => {
   if (!T.requests.includes(me)) {
     T.requests.push(me);
     sendTo(t, { type: 'contacts', request: name(me) });
-    pushTo(t, { title: 'Heraxos', body: name(me) + ' хочет добавить вас в контакты', from: name(me), kind: 'request' });
+    pushTo(t, { title: 'Ahazang', body: name(me) + ' хочет добавить вас в контакты', from: name(me), kind: 'request' });
   }
   save(); res.json({ status: 'sent' });
 });
@@ -192,6 +194,14 @@ app.post('/api/subscribe', auth, (req, res) => {
   save(); res.json({ ok: true });
 });
 
+// Диагностика с телефонов (загрузки страницы, ошибки JS): пишется в журнал сервера
+app.post('/api/diag', (req, res) => {
+  if (limited('d' + req.ip, 60)) return res.status(429).end();
+  const b = req.body || {};
+  console.log('[diag]', req.ip, String(b.ev || '').slice(0, 20), '#' + (+b.n || 0), String(b.nav || '').slice(0, 12),
+    String(b.url || '').slice(0, 80), '|', String(b.info || '').slice(0, 600).replace(/\s+/g, ' '), '|', String(b.ua || '').slice(0, 200));
+  res.status(204).end();
+});
 app.get('/api/ice', auth, (req, res) => {
   const username = `${Math.floor(Date.now() / 1000) + 12 * 3600}:${req.me}`;
   const credential = crypto.createHmac('sha1', TURN_SECRET).update(username).digest('base64');
@@ -280,7 +290,7 @@ function startRinging(id, from, to, video) {
     if (!r || !r.invited.has(to)) return stopRinging(id, to, false);
     n++;
     pushTo(to, { kind: 'call', call: true, id, n, video, from: name(from),
-      title: (video ? '📹 Видеозвонок' : '📞 Звонок') + ' · Heraxos', body: name(from) + ' звонит вам…' });
+      title: (video ? '📹 Видеозвонок' : '📞 Звонок') + ' · Ahazang', body: name(from) + ' звонит вам…' });
   };
   tick();
   ringing.set(key, { timer: setInterval(tick, 3500), from });
@@ -332,6 +342,7 @@ function leaveRoom(id, me) {
   maybeEnd(id);
 }
 const leaveTimers = new Map();
+const reloadSent = new Map(); // token -> когда последний раз просили перезагрузиться
 
 const server = process.env.CERT
   ? https.createServer({ cert: fs.readFileSync(process.env.CERT), key: fs.readFileSync(process.env.KEY) }, app)
@@ -342,13 +353,21 @@ wss.on('connection', (ws, req) => {
   const q = new URL(req.url, 'http://x').searchParams, me = db.tokens[q.get('token')];
   if (!me || !db.users[me]) return ws.close(4001, 'auth');
   ws.bg = q.get('bg') === '1';
-  if (!ws.bg && q.get('v') !== APP_VERSION) ws.send(JSON.stringify({ type: 'reload' }));
+  console.log('[ws]', me, ws.bg ? 'фон (Android-служба)' : 'страница v' + q.get('v'), String(req.headers['user-agent'] || '').slice(0, 120));
+  // Устаревший клиент перезагружаем, но не чаще раза в 2 минуты — чтобы не было бесконечной перезагрузки,
+  // если браузер всё-таки отдал старый файл из кэша
+  if (!ws.bg && q.get('v') !== APP_VERSION) {
+    const key = q.get('token'), last = reloadSent.get(key) || 0;
+    console.log('[reload]', me, 'версия клиента', q.get('v'), Date.now() - last > 120000 ? '→ перезагрузка' : '→ пропуск (недавно уже просили)');
+    if (Date.now() - last > 120000) { reloadSent.set(key, Date.now()); ws.send(JSON.stringify({ type: 'reload', v: APP_VERSION })); }
+  }
   const was = isOnline(me);
   if (!online.has(me)) online.set(me, new Set());
   online.get(me).add(ws);
   if (!was && isOnline(me)) broadcastPresence(me, true);
   ws.isAlive = true; ws.on('pong', () => (ws.isAlive = true));
-  if (!ws.bg) { clearTimeout(leaveTimers.get(me)); leaveTimers.delete(me); }
+  // любое соединение (в том числе фоновое соединение Android-службы) отменяет выход из звонка
+  clearTimeout(leaveTimers.get(me)); leaveTimers.delete(me);
   const p = pending.get(me), pr = p && rooms.get(p.id);
   if (pr && pr.invited.has(me)) {
     ws.send(JSON.stringify({ type: 'invite', id: p.id, from: name(p.from), video: p.video, members: [...pr.members].map(name) }));
@@ -359,6 +378,8 @@ wss.on('connection', (ws, req) => {
     let m; try { m = JSON.parse(raw); } catch { return; }
     if (limited('w' + me, 300)) return;
     const to = String(m.to || '').toLowerCase();
+    if (['invite', 'accept', 'reject', 'hangup', 'offer', 'answer', 'reneg'].includes(m.type))
+      console.log('[call]', m.type, me + (ws.bg ? '(фон)' : ''), to ? '→ ' + to : '', m.id ? 'id=' + m.id : '');
     switch (m.type) {
       case 'msg': { // зашифрованное сообщение
         if (!isContact(me, to) || typeof m.ct !== 'string' || typeof m.iv !== 'string' || m.ct.length > 200000) return;
@@ -407,7 +428,7 @@ wss.on('connection', (ws, req) => {
         break;
       }
       case 'hangup': leaveRoom(String(m.id), me); break;
-      case 'offer': case 'answer': case 'ice': {
+      case 'offer': case 'answer': case 'ice': case 'reneg': {
         const r = rooms.get(String(m.id)); if (!r || !r.members.has(me) || !r.members.has(to)) return;
         sendTo(to, { ...m, from: name(me), to: undefined });
         break;
@@ -424,10 +445,16 @@ wss.on('connection', (ws, req) => {
     const was = isOnline(me); s.delete(ws); if (!s.size) online.delete(me);
     if (was && !isOnline(me)) {
       if (db.users[me]) { db.users[me].lastSeen = Date.now(); save(); } broadcastPresence(me, false);
+    }
+    // Свернутое приложение (Яндекс Карты и т.п.) часто теряет соединение страницы, но сам звонок идёт напрямую
+    // между телефонами. Поэтому из звонка выводим, только если у человека не осталось НИ ОДНОГО соединения
+    // (включая фоновое) дольше 60 секунд. Завершённый с телефона звонок закрывается сообщением hangup сразу.
+    if (!online.has(me) && [...rooms.values()].some((r) => r.members.has(me))) {
+      clearTimeout(leaveTimers.get(me));
       leaveTimers.set(me, setTimeout(() => {
-        leaveTimers.delete(me); if (isOnline(me)) return;
+        leaveTimers.delete(me); if (online.has(me)) return;
         for (const [id, r] of rooms) if (r.members.has(me)) leaveRoom(id, me);
-      }, 20000));
+      }, 60000));
     }
   });
 });
@@ -437,4 +464,4 @@ function broadcastPresence(login, on) {
 }
 setInterval(() => wss.clients.forEach((ws) => { if (!ws.isAlive) return ws.terminate(); ws.isAlive = false; ws.ping(); }), 25000);
 
-server.listen(PORT, () => console.log(`Heraxos: ${process.env.CERT ? 'https' : 'http'}://${DOMAIN}:${PORT}  (админ: /admin.html)`));
+server.listen(PORT, () => console.log(`Ahazang: ${process.env.CERT ? 'https' : 'http'}://${DOMAIN}:${PORT}  (админ: /admin.html)`));
