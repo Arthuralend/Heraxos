@@ -23,11 +23,12 @@ jobs:
           gradle-version: '8.10.2'
       - name: Сборка
         run: gradle assembleRelease --no-daemon --stacktrace
-      - run: cp app/build/outputs/apk/release/app-release.apk Heraxos.apk
+      # Ahazang.apk — новое имя; Heraxos.apk — копия, чтобы старые ссылки продолжали работать
+      - run: cp app/build/outputs/apk/release/app-release.apk Ahazang.apk && cp Ahazang.apk Heraxos.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: Heraxos-apk
-          path: Heraxos.apk
+          name: Ahazang-apk
+          path: Ahazang.apk
       # Текст выпуска: список изменений из CHANGES.md (его показывает приложение в «Настройках → Обновление»)
       - name: Описание выпуска
         run: |
@@ -36,13 +37,15 @@ jobs:
             echo
             echo '---'
             echo
-            echo 'Скачайте **Heraxos.apk** ниже и откройте его на телефоне.'
-            echo 'Постоянная ссылка на последнюю версию: https://github.com/${{ github.repository }}/releases/latest/download/Heraxos.apk'
+            echo 'Скачайте **Ahazang.apk** ниже и откройте его на телефоне.'
+            echo 'Постоянная ссылка на последнюю версию: https://github.com/${{ github.repository }}/releases/latest/download/Ahazang.apk'
           } > release-notes.md
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: v1.0.${{ github.run_number }}
-          name: Heraxos для Android 1.0.${{ github.run_number }}
+          name: Ahazang для Android 1.0.${{ github.run_number }}
           body_path: release-notes.md
-          files: Heraxos.apk
+          files: |
+            Ahazang.apk
+            Heraxos.apk
           make_latest: true

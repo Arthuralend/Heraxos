@@ -48,7 +48,7 @@ class IncomingCallActivity : Activity() {
 
     private fun bind(i: Intent) {
         callId = i.getStringExtra("id") ?: ""
-        val from = i.getStringExtra("from") ?: "Heraxos"
+        val from = i.getStringExtra("from") ?: "Ahazang"
         val video = i.getBooleanExtra("video", false)
         if (CallService.instance?.currentCall != callId) { finish(); return }
 
@@ -74,7 +74,7 @@ class IncomingCallActivity : Activity() {
             setPadding(0, dp(22), 0, dp(6))
         })
         top.addView(TextView(this).apply {
-            text = if (video) "Видеозвонок Heraxos…" else "Аудиозвонок Heraxos…"
+            text = if (video) "Видеозвонок Ahazang…" else "Аудиозвонок Ahazang…"
             setTextColor(0xCCFFFFFF.toInt()); textSize = 17f; gravity = Gravity.CENTER
         })
         top.addView(TextView(this).apply {

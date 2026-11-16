@@ -1,7 +1,7 @@
 import UIKit
 import WebKit
 
-/// Heraxos внутри приложения: тот же интерфейс, что на сайте, плюс нативное управление звуком звонка.
+/// Ahazang внутри приложения: тот же интерфейс, что на сайте, плюс нативное управление звуком звонка.
 final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDelegate, WKScriptMessageHandler {
 
     private var web: WKWebView!

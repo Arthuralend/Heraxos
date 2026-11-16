@@ -1,12 +1,12 @@
-// Heraxos — клиент
-const APP_VERSION = '6';
+// Ahazang — клиент
+const APP_VERSION = '7';
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 let token = localStorage.getItem('hx_token'), me = localStorage.getItem('hx_me');
 const wasLoggedIn = !!token; // для «Что нового»: показываем только тем, кто уже пользовался приложением
 let ws, iceServers = [], users = [], chats = [], cur = null, call = null, reloadAfterCall = false;
 const peerKeys = new Map(), online = new Set(), lastSeen = new Map();
-// Android-приложение Heraxos (WebView) даёт мост window.HeraxosAndroid
+// Android-приложение Ahazang (WebView) даёт мост window.HeraxosAndroid
 const AND = window.HeraxosAndroid || null;
 const D = (ev, info) => { try { window.hxDiag && hxDiag(ev, info); } catch {} };
 const errText = (e) => (e && (e.name ? e.name + ': ' : '') + (e.message || e)) || String(e);
@@ -99,7 +99,7 @@ function logout(silent) {
   localStorage.removeItem('hx_token'); token = null; ws && ws.close(); ws = null;
   $('app').classList.remove('on'); $('auth').classList.add('on');
 }
-$('bOut').onclick = () => confirm('Выйти из Heraxos на этом устройстве?') && logout();
+$('bOut').onclick = () => confirm('Выйти из Ahazang на этом устройстве?') && logout();
 
 // ---------- запуск ----------
 async function start() {
@@ -307,7 +307,7 @@ function renderChats() {
   let total = 0; L.innerHTML = '';
   if (!AND && (window.Notification && Notification.permission === 'default' || (isIOS && !standalone))) {
     const b = document.createElement('div'); b.className = 'e2e-note'; b.style.margin = '6px 16px 8px'; b.style.cursor = 'pointer';
-    b.innerHTML = isIOS && !standalone ? '📲 Добавьте Heraxos на экран «Домой» (Поделиться → На экран «Домой»), чтобы получать звонки и сообщения' : '🔔 Нажмите, чтобы включить уведомления о звонках и сообщениях';
+    b.innerHTML = isIOS && !standalone ? '📲 Добавьте Ahazang на экран «Домой» (Поделиться → На экран «Домой»), чтобы получать звонки и сообщения' : '🔔 Нажмите, чтобы включить уведомления о звонках и сообщениях';
     b.onclick = enablePush; L.appendChild(b);
   }
   const list = chats.filter((c) => c.peer.toLowerCase().includes(q));
@@ -434,14 +434,14 @@ $('txt').addEventListener('input', () => {
 const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
 function pushState() {
-  if (AND) { $('pushState').textContent = window.HeraxosPlatform === 'ios' ? 'Тестовая версия: звонки приходят, пока приложение открыто' : 'Звонки и сообщения приходят через приложение Heraxos'; return; }
+  if (AND) { $('pushState').textContent = window.HeraxosPlatform === 'ios' ? 'Тестовая версия: звонки приходят, пока приложение открыто' : 'Звонки и сообщения приходят через приложение Ahazang'; return; }
   const s = !('PushManager' in window) ? (isIOS && !standalone ? 'Сначала добавьте на экран «Домой»' : 'Не поддерживается этим браузером')
     : Notification.permission === 'granted' ? 'Включены' : Notification.permission === 'denied' ? 'Запрещены в настройках браузера' : 'Нажмите, чтобы включить';
   $('pushState').textContent = s;
   if (window.Notification && Notification.permission === 'granted') subscribePush();
 }
 async function enablePush() {
-  if (isIOS && !standalone) return toast('Нажмите «Поделиться» → «На экран Домой», затем откройте Heraxos со значка', 5000);
+  if (isIOS && !standalone) return toast('Нажмите «Поделиться» → «На экран Домой», затем откройте Ahazang со значка', 5000);
   if (!('PushManager' in window)) return toast('Браузер не поддерживает уведомления');
   if ((await Notification.requestPermission()) === 'granted') { await subscribePush(); toast('Уведомления включены'); }
   pushState(); renderChats();
@@ -497,7 +497,7 @@ function mungeOpus(sdp) {
   return re.test(sdp) ? sdp.replace(re, `a=fmtp:${pt} ${want}`) : sdp.replace(m[0], `${m[0]}\r\na=fmtp:${pt} ${want}`);
 }
 function mungeVideoStart(sdp) {
-  const pts = [], re = /a=rtpmap:(\d+) (VP8|VP9|H264|AV1)\/90000/gi; let m;
+  const pts = [], re = /a=rtpmap:(\d+) (VP8|VP9|H264)\/90000/gi; let m;
   while ((m = re.exec(sdp))) pts.push(m[1]);
   for (const pt of pts) {
     const f = new RegExp(`a=fmtp:${pt} (.*)`);
@@ -508,40 +508,15 @@ function mungeVideoStart(sdp) {
 }
 async function setLocal(pc, desc) { await pc.setLocalDescription({ type: desc.type, sdp: mungeVideoStart(mungeOpus(desc.sdp)) }); }
 
-// AV1 — самый эффективный кодек (≈30% меньше трафика, чем у VP9, при той же картинке).
-// Предлагаем его, только если это устройство тянет AV1 в реальном времени; собеседник выберет AV1,
-// только если тоже его поддерживает — иначе автоматически VP9 → H.264 → VP8.
-let av1Ok = false, av1Checked = null;
-// Safari (iPhone, iPad, Mac): AV1-кодировщика для звонков нет, а сама проверка на iPhone может сбоить — пропускаем
-const appleWebKit = /CriOS|FxiOS|EdgiOS/.test(navigator.userAgent) ||
-  (/AppleWebKit/.test(navigator.userAgent) && !/Chrome|Chromium|Android|Edg\//.test(navigator.userAgent));
-function checkAV1() {
-  if (!av1Checked) av1Checked = appleWebKit ? Promise.resolve(av1Ok = false)
-    : Promise.race([detectAV1(), new Promise((r) => setTimeout(() => r(av1Ok), 1500))]); // не ждём дольше 1,5 с
-  return av1Checked;
-}
-async function detectAV1() {
-  try {
-    const has = (c) => !!(c && c.codecs.some((x) => /^video\/AV1$/i.test(x.mimeType)));
-    if (!window.RTCRtpSender || !has(RTCRtpSender.getCapabilities('video')) || !has(RTCRtpReceiver.getCapabilities('video'))) return (av1Ok = false);
-    let ok = true;
-    if (navigator.mediaCapabilities && navigator.mediaCapabilities.encodingInfo) {
-      const i = await navigator.mediaCapabilities.encodingInfo({ type: 'webrtc', video: { contentType: 'video/AV1', width: 1280, height: 720, bitrate: 2_500_000, framerate: 30 } }).catch(() => null);
-      if (i && (!i.supported || !i.smooth)) ok = false; // кодек есть, но телефон не успевает кодировать
-    }
-    av1Ok = ok;
-  } catch { av1Ok = false; }
-  return av1Ok;
-}
 function preferCodecs(pc) {
   if (!window.RTCRtpReceiver || !RTCRtpReceiver.getCapabilities) return;
   for (const t of pc.getTransceivers()) {
     const kind = t.receiver.track && t.receiver.track.kind; if (!kind || !t.setCodecPreferences) continue;
     const caps = RTCRtpReceiver.getCapabilities(kind); if (!caps) continue;
-    const order = kind === 'audio' ? ['audio/red', 'audio/opus'] : ['video/AV1', 'video/VP9', 'video/H264', 'video/VP8'];
+    const order = kind === 'audio' ? ['audio/red', 'audio/opus'] : ['video/VP9', 'video/H264', 'video/VP8'];
     const rank = (c) => { const i = order.indexOf(c.mimeType); return i < 0 ? 99 : i; };
-    let list = [...caps.codecs];
-    if (kind === 'video' && !av1Ok) list = list.filter((c) => !/^video\/AV1$/i.test(c.mimeType));
+    // AV1 отключён: на части телефонов (особенно iPhone) с ним были сбои
+    const list = [...caps.codecs].filter((c) => !/^video\/AV1$/i.test(c.mimeType));
     try { t.setCodecPreferences(list.sort((a, b) => rank(a) - rank(b))); } catch {}
   }
 }
@@ -738,7 +713,7 @@ async function startCall(peer, video) {
   $('callState').textContent = 'Вызов…'; showCallScreen('outgoing'); layout();
   audioSessionCall();
   try {
-    call.stream = await getMedia(video); await checkAV1();
+    call.stream = await getMedia(video);
     showLocal(); setRoute(video ? 'speaker' : 'earpiece'); nativeCall(true);
     send({ type: 'invite', to: peer, video });
   } catch (e) { D('call-out-err', errText(e)); toast('Нет доступа к микрофону/камере'); endCall(false); }
@@ -765,7 +740,7 @@ async function onSignal(m) {
       const others = (m.members || []).filter((x) => K(x) !== K(m.from));
       newCall({ id: m.id, dir: 'ring', title: m.from, offerVideo: m.video });
       $('callName').textContent = m.from; avatar($('callAva'), m.from);
-      $('callState').textContent = others.length ? `Групповой звонок · ещё ${others.join(', ')}` : (m.video ? 'Видеозвонок Heraxos…' : 'Аудиозвонок Heraxos…');
+      $('callState').textContent = others.length ? `Групповой звонок · ещё ${others.join(', ')}` : (m.video ? 'Видеозвонок Ahazang…' : 'Аудиозвонок Ahazang…');
       $('wrapAcceptV').style.display = m.video ? '' : 'none';
       showCallScreen('incoming'); layout();
       if (autoAnswer && autoAnswer.id === m.id) { const v = autoAnswer.video; autoAnswer = null; accept(v && m.video); }
@@ -814,7 +789,7 @@ async function accept(video) {
   audioSessionCall();
   try {
     call.dir = 'in';
-    call.stream = await getMedia(video); await checkAV1(); showLocal();
+    call.stream = await getMedia(video); showLocal();
     setRoute(video || call.offerVideo ? 'speaker' : 'earpiece'); nativeCall(true);
     $('callState').textContent = 'Соединение…'; showCallScreen('active');
     send({ type: 'accept', id: call.id });
@@ -948,14 +923,14 @@ function ring(on) {
 
 // ---------- версии, обновления, «Что нового» ----------
 const REPO = 'Arthuralend/Heraxos';
-const APK_URL = `https://github.com/${REPO}/releases/latest/download/Heraxos.apk`;
+const APK_URL = `https://github.com/${REPO}/releases/latest/download/Ahazang.apk`;
 const WHATS_NEW = [
+  'Новое название — Ahazang и новая иконка. Логины, контакты и переписка сохранены',
   'Звонок не обрывается, когда вы сворачиваете приложение — например, переключаетесь на Яндекс Карты',
-  'Связь сама восстанавливается при смене сети (Wi-Fi ↔ мобильный интернет), без завершения звонка',
-  'Видео сразу в 1080p; качество снижается только при слабом интернете и возвращается, когда скорость растёт',
-  'Кодек AV1, если оба телефона его поддерживают: картинка чётче при том же трафике',
+  'Связь сама восстанавливается при смене сети (Wi-Fi ↔ мобильный интернет)',
+  'Видео сразу в 1080p; качество снижается только при слабом интернете',
   'Звук: защита от потерь пакетов (RED + FEC) — речь не «булькает» в мобильной сети',
-  'Новый тёплый дизайн, светлая и тёмная тема по настройкам телефона',
+  'Светлый тёплый дизайн',
   'Уведомление о новых версиях приложения прямо в «Настройках»',
 ];
 const androidVersion = () => { try { return AND && AND.appVersion ? +AND.appVersion() || 0 : 0; } catch { return 0; } };
@@ -973,7 +948,7 @@ function infoSheet(title, html, actions) {
 }
 $('info').onclick = (e) => { if (e.target === $('info')) $('info').classList.remove('on'); };
 const listHTML = (items) => '<ul class="notes">' + items.map((x) => `<li>${esc(x)}</li>`).join('') + '</ul>';
-function showWhatsNew() { infoSheet(`Что нового в Heraxos ${APP_VERSION}`, listHTML(WHATS_NEW), [{ label: 'Понятно', primary: true }]); }
+function showWhatsNew() { infoSheet(`Что нового в Ahazang ${APP_VERSION}`, listHTML(WHATS_NEW), [{ label: 'Понятно', primary: true }]); }
 function whatsNewOnce() {
   const seen = localStorage.getItem('hx_seen_ver');
   localStorage.setItem('hx_seen_ver', APP_VERSION);
@@ -982,7 +957,7 @@ function whatsNewOnce() {
 $('bWhatsNew').onclick = showWhatsNew;
 function showVersionInfo() {
   const av = androidVersion();
-  $('verLine').textContent = `Heraxos · веб-версия ${APP_VERSION}` + (av ? ` · Android 1.0.${av}` : '');
+  $('verLine').textContent = `Ahazang · веб-версия ${APP_VERSION}` + (av ? ` · Android 1.0.${av}` : '');
 }
 // Android-приложение: проверяем выпуск на GitHub (раз в 6 часов) и показываем, что изменилось
 function releaseNotes(body) {
@@ -1008,7 +983,7 @@ async function checkAppUpdate(manual) {
   $('updRow').classList.toggle('hot', !!has);
   $('setBadge').style.display = has ? 'block' : 'none';
   const offer = () => infoSheet(`Доступна версия 1.0.${rel.n}`,
-    (rel.notes.length ? '<p class="mute">Что изменилось:</p>' + listHTML(rel.notes) : '<p class="mute">Новая версия приложения Heraxos.</p>') +
+    (rel.notes.length ? '<p class="mute">Что изменилось:</p>' + listHTML(rel.notes) : '<p class="mute">Новая версия приложения Ahazang.</p>') +
     `<p class="mute small">У вас 1.0.${av}. Скачайте файл и откройте его — данные и вход сохранятся.</p>`,
     [{ label: 'Скачать обновление', primary: true, href: APK_URL }, { label: 'Позже' }]);
   $('updRow').onclick = () => (has ? offer() : checkAppUpdate(true));

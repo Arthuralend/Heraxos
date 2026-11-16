@@ -27,7 +27,7 @@ import okhttp3.WebSocketListener
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
-/** Фоновая служба: держит соединение с сервером Heraxos и показывает входящие звонки на весь экран. */
+/** Фоновая служба: держит соединение с сервером Ahazang и показывает входящие звонки на весь экран. */
 class CallService : Service() {
 
     companion object {
@@ -103,7 +103,7 @@ class CallService : Service() {
     private fun serviceNote(): Notification {
         if (!callActive) return Notification.Builder(this, CH_SERVICE)
             .setSmallIcon(R.drawable.ic_notif)
-            .setContentTitle("Heraxos")
+            .setContentTitle("Ahazang")
             .setContentText("Готов принимать звонки")
             .setOngoing(true)
             .setContentIntent(openApp(null, 10))
@@ -113,7 +113,7 @@ class CallService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         return Notification.Builder(this, CH_ONGOING)
             .setSmallIcon(R.drawable.ic_notif)
-            .setContentTitle(if (callVideo) "Идёт видеозвонок Heraxos" else "Идёт звонок Heraxos")
+            .setContentTitle(if (callVideo) "Идёт видеозвонок Ahazang" else "Идёт звонок Ahazang")
             .setContentText("Нажмите, чтобы вернуться к звонку")
             .setCategory(Notification.CATEGORY_CALL)
             .setOngoing(true)
@@ -245,8 +245,8 @@ class CallService : Service() {
             "contacts" -> {
                 val r = m.optString("request")
                 val a = m.optString("accepted")
-                if (!MainActivity.visible && r.isNotEmpty()) notifyText("Heraxos", "$r хочет добавить вас в контакты", null)
-                if (!MainActivity.visible && a.isNotEmpty()) notifyText("Heraxos", "$a принял(а) вашу заявку", a)
+                if (!MainActivity.visible && r.isNotEmpty()) notifyText("Ahazang", "$r хочет добавить вас в контакты", null)
+                if (!MainActivity.visible && a.isNotEmpty()) notifyText("Ahazang", "$a принял(а) вашу заявку", a)
             }
         }
     }
@@ -271,7 +271,7 @@ class CallService : Service() {
         val b = Notification.Builder(this, CH_CALL)
             .setSmallIcon(R.drawable.ic_notif)
             .setContentTitle(from)
-            .setContentText(if (video) "Входящий видеозвонок Heraxos" else "Входящий звонок Heraxos")
+            .setContentText(if (video) "Входящий видеозвонок Ahazang" else "Входящий звонок Ahazang")
             .setCategory(Notification.CATEGORY_CALL)
             .setOngoing(true)
             .setAutoCancel(false)

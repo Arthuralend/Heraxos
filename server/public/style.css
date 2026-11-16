@@ -1,5 +1,4 @@
-/* Heraxos — тёплая палитра: кремовый фон, терракотовый акцент, заголовки с засечками.
-   Светлая и тёмная тема переключаются автоматически по настройке телефона. */
+/* Ahazang — светлая тёплая палитра: кремовый фон, терракотовый акцент, заголовки с засечками. */
 :root{
   --bg:#faf9f5; --bg2:#f5f4ed; --panel:#ffffff; --panel2:#f0eee6; --line:rgba(31,30,29,.11);
   --text:#141413; --mute:#73726c; --faint:#a3a198;
@@ -16,22 +15,7 @@
   --sat:env(safe-area-inset-top); --sab:env(safe-area-inset-bottom);
   --r:14px; color-scheme:light;
 }
-@media (prefers-color-scheme:dark){
-  :root{
-    --bg:#262624; --bg2:#1f1e1d; --panel:#30302e; --panel2:#3a3936; --line:rgba(250,249,245,.09);
-    --text:#f5f4ee; --mute:#a3a198; --faint:#77756e;
-    --brand:#d97757; --brand2:#e3906f; --brand-d:#c96442;
-    --brand-soft:rgba(217,119,87,.13); --brand-ring:rgba(217,119,87,.28);
-    --out:#4a3328; --out-text:#f5f4ee; --in:#30302e; --in-border:rgba(250,249,245,.05);
-    --green:#6fae7b; --red:#e0685c;
-    --hover:rgba(250,249,245,.04); --press:rgba(250,249,245,.08);
-    --glass:rgba(38,38,36,.86); --glass2:rgba(31,30,29,.92);
-    --toast:rgba(58,57,54,.97); --toast-text:#f5f4ee;
-    --shadow:0 1px 2px rgba(0,0,0,.25),0 4px 14px rgba(0,0,0,.18);
-    --scroll:rgba(250,249,245,.14); --dots:rgba(250,249,245,.035);
-    color-scheme:dark;
-  }
-}
+
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--text);
   font:16px/1.4 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Inter,Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}

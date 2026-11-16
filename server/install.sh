@@ -1,5 +1,5 @@
 #!/bin/bash
-# Установка Heraxos на Ubuntu/Debian. Запуск: sudo bash install.sh
+# Установка Ahazang на Ubuntu/Debian. Запуск: sudo bash install.sh
 set -e
 IP=82.26.86.235
 DOMAIN=${DOMAIN:-82-26-86-235.sslip.io}   # бесплатный домен на ваш IP; можно задать свой: DOMAIN=call.example.com bash install.sh
@@ -79,7 +79,7 @@ systemctl enable coturn >/dev/null; systemctl restart coturn
 echo "== Служба"
 cat > /etc/systemd/system/heraxos.service <<E
 [Unit]
-Description=Heraxos
+Description=Ahazang
 After=network.target
 [Service]
 WorkingDirectory=$DIR

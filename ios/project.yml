@@ -11,7 +11,7 @@ targets:
     info:
       path: Heraxos/Info.plist
       properties:
-        CFBundleDisplayName: Heraxos
+        CFBundleDisplayName: Ahazang
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         LSRequiresIPhoneOS: true
@@ -22,8 +22,8 @@ targets:
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         UISupportedInterfaceOrientations~ipad: [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
         UIBackgroundModes: [audio]
-        NSCameraUsageDescription: "Камера нужна для видеозвонков Heraxos"
-        NSMicrophoneUsageDescription: "Микрофон нужен для звонков Heraxos"
+        NSCameraUsageDescription: "Камера нужна для видеозвонков Ahazang"
+        NSMicrophoneUsageDescription: "Микрофон нужен для звонков Ahazang"
         ITSAppUsesNonExemptEncryption: false
     settings:
       base:

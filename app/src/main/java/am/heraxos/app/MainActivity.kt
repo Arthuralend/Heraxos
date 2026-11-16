@@ -7,7 +7,6 @@ import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.content.res.Configuration
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -45,8 +44,7 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         current = this
         web = WebView(this)
-        val night = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
-        web.setBackgroundColor(if (night) 0xFF262624.toInt() else 0xFFFAF9F5.toInt())
+        web.setBackgroundColor(0xFFFAF9F5.toInt())
         // Страница со звонком не должна «засыпать», когда приложение свёрнуто (Яндекс Карты поверх и т.п.)
         web.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false)
         setContentView(web)

@@ -1,4 +1,4 @@
-// Heraxos service worker: push-уведомления
+// Ahazang service worker: push-уведомления
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
 
@@ -18,13 +18,13 @@ self.addEventListener('push', (e) => {
       const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
       const visible = wins.some((c) => c.visibilityState === 'visible');
       await closeCall(d.id); // оставляем только самое свежее уведомление о звонке
-      return self.registration.showNotification(d.title || 'Heraxos', {
+      return self.registration.showNotification(d.title || 'Ahazang', {
         body: d.body || '', icon: '/icon-192.png', badge: '/icon-192.png',
         tag: 'call-' + d.id + '-' + (d.n || 0), renotify: true, requireInteraction: true,
         silent: false, vibrate: visible ? [] : RING, data: d,
       });
     }
-    return self.registration.showNotification(d.title || 'Heraxos', {
+    return self.registration.showNotification(d.title || 'Ahazang', {
       body: d.body || '', icon: '/icon-192.png', badge: '/icon-192.png',
       tag: (d.kind || 'msg') + '-' + (d.from || ''), renotify: true,
       vibrate: d.kind === 'missed' ? [300, 150, 300] : [120], data: d,

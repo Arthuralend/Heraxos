@@ -1,4 +1,4 @@
-// Heraxos — сервер: аккаунты, зашифрованные чаты (E2E), сигнализация звонков, push, TURN, админ-кабинет
+// Ahazang — сервер: аккаунты, зашифрованные чаты (E2E), сигнализация звонков, push, TURN, админ-кабинет
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
@@ -51,7 +51,7 @@ app.set('trust proxy', false);
 app.use(express.json({ limit: '256kb' }));
 app.use((req, res, next) => { res.set({ 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY' }); next(); });
 // Версия веб-приложения: устаревшие клиенты получают команду перезагрузиться
-const APP_VERSION = '6';
+const APP_VERSION = '7';
 // HTML/JS/CSS не кэшируются вовсе (Safari на iPhone иначе может держать старый app.js), картинки — с проверкой
 app.use(express.static(path.join(__dirname, 'public'), { maxAge: 0, etag: true, setHeaders: (res, file) =>
   res.set('Cache-Control', /\.(html|js|css|json)$/.test(file) ? 'no-store, must-revalidate' : 'no-cache') }));
@@ -131,7 +131,7 @@ app.post('/api/contacts/add', auth, (req, res) => {
   if (!T.requests.includes(me)) {
     T.requests.push(me);
     sendTo(t, { type: 'contacts', request: name(me) });
-    pushTo(t, { title: 'Heraxos', body: name(me) + ' хочет добавить вас в контакты', from: name(me), kind: 'request' });
+    pushTo(t, { title: 'Ahazang', body: name(me) + ' хочет добавить вас в контакты', from: name(me), kind: 'request' });
   }
   save(); res.json({ status: 'sent' });
 });
@@ -290,7 +290,7 @@ function startRinging(id, from, to, video) {
     if (!r || !r.invited.has(to)) return stopRinging(id, to, false);
     n++;
     pushTo(to, { kind: 'call', call: true, id, n, video, from: name(from),
-      title: (video ? '📹 Видеозвонок' : '📞 Звонок') + ' · Heraxos', body: name(from) + ' звонит вам…' });
+      title: (video ? '📹 Видеозвонок' : '📞 Звонок') + ' · Ahazang', body: name(from) + ' звонит вам…' });
   };
   tick();
   ringing.set(key, { timer: setInterval(tick, 3500), from });
@@ -464,4 +464,4 @@ function broadcastPresence(login, on) {
 }
 setInterval(() => wss.clients.forEach((ws) => { if (!ws.isAlive) return ws.terminate(); ws.isAlive = false; ws.ping(); }), 25000);
 
-server.listen(PORT, () => console.log(`Heraxos: ${process.env.CERT ? 'https' : 'http'}://${DOMAIN}:${PORT}  (админ: /admin.html)`));
+server.listen(PORT, () => console.log(`Ahazang: ${process.env.CERT ? 'https' : 'http'}://${DOMAIN}:${PORT}  (админ: /admin.html)`));
