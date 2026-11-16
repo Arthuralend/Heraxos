@@ -194,6 +194,14 @@ app.post('/api/subscribe', auth, (req, res) => {
   save(); res.json({ ok: true });
 });
 
+// Диагностика с телефонов (загрузки страницы, ошибки JS): пишется в журнал сервера
+app.post('/api/diag', (req, res) => {
+  if (limited('d' + req.ip, 60)) return res.status(429).end();
+  const b = req.body || {};
+  console.log('[diag]', req.ip, String(b.ev || '').slice(0, 20), '#' + (+b.n || 0), String(b.nav || '').slice(0, 12),
+    String(b.url || '').slice(0, 80), '|', String(b.info || '').slice(0, 600).replace(/\s+/g, ' '), '|', String(b.ua || '').slice(0, 200));
+  res.status(204).end();
+});
 app.get('/api/ice', auth, (req, res) => {
   const username = `${Math.floor(Date.now() / 1000) + 12 * 3600}:${req.me}`;
   const credential = crypto.createHmac('sha1', TURN_SECRET).update(username).digest('base64');

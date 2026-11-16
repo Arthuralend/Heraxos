@@ -175,6 +175,7 @@ try { navigator.connection && navigator.connection.addEventListener('change', ne
 // Перезагрузка на новую версию: адрес с меткой времени, чтобы браузер точно не взял старые файлы из кэша,
 // и не чаще раза в 2 минуты — защита от бесконечной перезагрузки
 function hardReload(v) {
+  window.hxDiag && hxDiag('hardReload', v);
   try {
     const last = +sessionStorage.getItem('hx_reload_at') || 0;
     if (Date.now() - last < 120000) return toast('Доступна новая версия — закройте и откройте приложение', 5000);

@@ -169,6 +169,25 @@
 
 <div id="toast"></div>
 <audio id="ring" src="/ring.wav" loop preload="auto"></audio>
+<script>
+// Диагностика: сообщает серверу о загрузках страницы и ошибках (видно в journalctl -u heraxos)
+(function () {
+  var n = 0; try { n = (+sessionStorage.getItem('hx_diag_n') || 0) + 1; sessionStorage.setItem('hx_diag_n', n); } catch (e) {}
+  function d(ev, info) {
+    try {
+      var nav = (performance.getEntriesByType && performance.getEntriesByType('navigation')[0]) || {};
+      var b = JSON.stringify({ ev: ev, info: String(info == null ? '' : info).slice(0, 600), n: n, nav: nav.type || '', url: location.pathname + location.search, ua: navigator.userAgent });
+      if (navigator.sendBeacon) navigator.sendBeacon('/api/diag', new Blob([b], { type: 'application/json' }));
+      else fetch('/api/diag', { method: 'POST', body: b, headers: { 'Content-Type': 'application/json' }, keepalive: true });
+    } catch (e) {}
+  }
+  window.hxDiag = d; d('load');
+  addEventListener('error', function (e) { d('error', (e.message || '') + ' @' + (e.filename || '') + ':' + (e.lineno || '') + ':' + (e.colno || '')); });
+  addEventListener('unhandledrejection', function (e) { var r = e.reason; d('reject', r && (r.stack || r.message) || r); });
+  addEventListener('pagehide', function (e) { d('pagehide', 'persisted=' + e.persisted); });
+  document.addEventListener('visibilitychange', function () { d('visibility', document.visibilityState); });
+})();
+</script>
 <script src="/crypto.js?v=6"></script>
 <script src="/app.js?v=6"></script>
 </body>
