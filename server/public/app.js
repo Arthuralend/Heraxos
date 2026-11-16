@@ -8,6 +8,8 @@ let ws, iceServers = [], users = [], chats = [], cur = null, call = null, reload
 const peerKeys = new Map(), online = new Set(), lastSeen = new Map();
 // Android-приложение Heraxos (WebView) даёт мост window.HeraxosAndroid
 const AND = window.HeraxosAndroid || null;
+const D = (ev, info) => { try { window.hxDiag && hxDiag(ev, info); } catch {} };
+const errText = (e) => (e && (e.name ? e.name + ': ' : '') + (e.message || e)) || String(e);
 if (/Android/i.test(navigator.userAgent) && !AND) document.documentElement.classList.add('is-android');
 const _qs = new URLSearchParams(location.search);
 let autoAnswer = _qs.get('answer') ? { id: _qs.get('call'), video: _qs.get('answer') === 'video' } : null;
@@ -145,6 +147,7 @@ function connect() {
     if (call) for (const p of call.peers.values()) if (p.lost) restartIce(p);
   };
   s.onclose = (e) => {
+    D('ws-close', e.code + (call ? ' (в звонке)' : ''));
     if (ws !== s) return;
     $('connState').textContent = 'нет соединения…';
     if (e.code === 4001) return logout(true);
@@ -580,7 +583,7 @@ function newPeer(login) {
   };
   pc.onconnectionstatechange = () => {
     if (!call || getPeer(login) !== p) return;
-    const st = pc.connectionState;
+    const st = pc.connectionState; D('pc', login + ' ' + st);
     if (st === 'connected') {
       p.connected = true; p.lost = 0; clearTimeout(p.rt); p.rt = null;
       if (!call.t0) { call.t0 = Date.now(); startTimer(); }
@@ -728,6 +731,7 @@ function pendingTile(login) {
 function dropPending(login) { const t = call && call.pending.get(K(login)); if (t) { t.remove(); call.pending.delete(K(login)); layout(); } }
 
 async function startCall(peer, video) {
+  D('call-start', peer + (video ? ' video' : ' audio'));
   if (call) return;
   newCall({ dir: 'out', title: peer, video0: video });
   pendingTile(peer);
@@ -737,7 +741,7 @@ async function startCall(peer, video) {
     call.stream = await getMedia(video); await checkAV1();
     showLocal(); setRoute(video ? 'speaker' : 'earpiece'); nativeCall(true);
     send({ type: 'invite', to: peer, video });
-  } catch (e) { toast('Нет доступа к микрофону/камере'); endCall(false); }
+  } catch (e) { D('call-out-err', errText(e)); toast('Нет доступа к микрофону/камере'); endCall(false); }
 }
 function showLocal() { $('local').srcObject = call.stream; layout(); }
 
@@ -754,6 +758,7 @@ function startTimer() {
 }
 
 async function onSignal(m) {
+  if (m.type !== 'ice') D('sig', m.type + (m.reason ? ' ' + m.reason : '') + (m.from ? ' от ' + m.from : ''));
   switch (m.type) {
     case 'invite': {
       if (call) { if (call.id !== m.id) send({ type: 'reject', id: m.id, reason: 'busy' }); return; }
@@ -774,11 +779,11 @@ async function onSignal(m) {
   switch (m.type) {
     case 'room': // мы вошли: соединяемся со всеми, кто уже в звонке
       $('callState').textContent = 'Соединение…';
-      for (const l of m.members) offerTo(l).catch((e) => console.warn(e));
+      for (const l of m.members) offerTo(l).catch((e) => D('offer-err', errText(e)));
       layout(); break;
     case 'ringing': pendingTile(m.login); break;
     case 'joined': dropPending(m.login); if (!getPeer(m.login)) { pendingTile(m.login); call.pending.get(K(m.login)).classList.add('joining'); } $('callState').textContent = 'Соединение…'; break;
-    case 'offer': await answerFrom(m.from, m.sdp).catch((e) => console.warn(e)); break;
+    case 'offer': await answerFrom(m.from, m.sdp).catch((e) => D('answer-err', errText(e))); break;
     case 'answer': { const p = getPeer(m.from); if (p && p.pc.signalingState === 'have-local-offer') { await p.pc.setRemoteDescription(m.sdp).catch((e) => console.warn(e)); flushIce(p); } break; }
     case 'reneg': { const p = getPeer(m.from); if (p) { p.lost ||= Date.now(); restartIce(p); } break; }
     case 'ice': { const p = getPeer(m.from); if (!p) return; if (p.pc.remoteDescription) p.pc.addIceCandidate(m.candidate).catch(() => {}); else p.ice.push(m.candidate); break; }
@@ -804,6 +809,7 @@ async function onSignal(m) {
 }
 
 async function accept(video) {
+  D('accept', video ? 'video' : 'audio');
   ring(false);
   audioSessionCall();
   try {
@@ -812,7 +818,7 @@ async function accept(video) {
     setRoute(video || call.offerVideo ? 'speaker' : 'earpiece'); nativeCall(true);
     $('callState').textContent = 'Соединение…'; showCallScreen('active');
     send({ type: 'accept', id: call.id });
-  } catch (e) { toast('Нет доступа к микрофону/камере'); send({ type: 'reject', id: call.id }); endCall(false); }
+  } catch (e) { D('call-in-err', errText(e)); toast('Нет доступа к микрофону/камере'); send({ type: 'reject', id: call.id }); endCall(false); }
 }
 $('bAcceptA').onclick = () => accept(false);
 $('bAcceptV').onclick = () => accept(true);

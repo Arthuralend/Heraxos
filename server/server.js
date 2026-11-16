@@ -353,10 +353,12 @@ wss.on('connection', (ws, req) => {
   const q = new URL(req.url, 'http://x').searchParams, me = db.tokens[q.get('token')];
   if (!me || !db.users[me]) return ws.close(4001, 'auth');
   ws.bg = q.get('bg') === '1';
+  console.log('[ws]', me, ws.bg ? 'фон (Android-служба)' : 'страница v' + q.get('v'), String(req.headers['user-agent'] || '').slice(0, 120));
   // Устаревший клиент перезагружаем, но не чаще раза в 2 минуты — чтобы не было бесконечной перезагрузки,
   // если браузер всё-таки отдал старый файл из кэша
   if (!ws.bg && q.get('v') !== APP_VERSION) {
     const key = q.get('token'), last = reloadSent.get(key) || 0;
+    console.log('[reload]', me, 'версия клиента', q.get('v'), Date.now() - last > 120000 ? '→ перезагрузка' : '→ пропуск (недавно уже просили)');
     if (Date.now() - last > 120000) { reloadSent.set(key, Date.now()); ws.send(JSON.stringify({ type: 'reload', v: APP_VERSION })); }
   }
   const was = isOnline(me);
@@ -376,6 +378,8 @@ wss.on('connection', (ws, req) => {
     let m; try { m = JSON.parse(raw); } catch { return; }
     if (limited('w' + me, 300)) return;
     const to = String(m.to || '').toLowerCase();
+    if (['invite', 'accept', 'reject', 'hangup', 'offer', 'answer', 'reneg'].includes(m.type))
+      console.log('[call]', m.type, me + (ws.bg ? '(фон)' : ''), to ? '→ ' + to : '', m.id ? 'id=' + m.id : '');
     switch (m.type) {
       case 'msg': { // зашифрованное сообщение
         if (!isContact(me, to) || typeof m.ct !== 'string' || typeof m.iv !== 'string' || m.ct.length > 200000) return;
