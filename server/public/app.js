@@ -169,8 +169,9 @@ function networkChanged() {
 }
 window.addEventListener('online', networkChanged);
 try { navigator.connection && navigator.connection.addEventListener('change', networkChanged); } catch {}
-// Приложение закрывают во время звонка — сразу сообщаем собеседнику
-window.addEventListener('pagehide', (e) => { if (call && call.id && !e.persisted) send({ type: 'hangup', id: call.id }); });
+// Закрытие страницы во время звонка НЕ завершает звонок сразу: Safari на iPhone присылает pagehide и при
+// простом сворачивании. Если человек действительно ушёл, сервер выведет его через 60 с без соединения,
+// а Android-приложение сообщает о закрытии само.
 
 async function onWS(m) {
   switch (m.type) {
@@ -646,7 +647,8 @@ async function applySenderParams(only) {
     const prm = sd.getParameters(); if (!prm.encodings || !prm.encodings.length) prm.encodings = [{}];
     if (sd.track.kind === 'audio') { prm.encodings[0].maxBitrate = AUDIO_BR; prm.encodings[0].priority = 'high'; prm.encodings[0].networkPriority = 'high'; }
     else { prm.encodings[0].maxBitrate = vbr; prm.encodings[0].maxFramerate = q.fps; prm.encodings[0].scaleResolutionDownBy = 1; prm.degradationPreference = 'maintain-framerate'; }
-    try { await sd.setParameters(prm); } catch {}
+    // Safari может отклонить degradationPreference целиком — тогда применяем хотя бы битрейт и частоту кадров
+    try { await sd.setParameters(prm); } catch { try { delete prm.degradationPreference; await sd.setParameters(prm); } catch {} }
   }
 }
 
