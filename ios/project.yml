@@ -9,6 +9,10 @@ targets:
     platform: iOS
     sources: [Heraxos]
     scheme: {}
+    entitlements:
+      path: Heraxos/Heraxos.entitlements
+      properties:
+        aps-environment: development   # при выгрузке в TestFlight Xcode сам заменит на production
     info:
       path: Heraxos/Info.plist
       properties:
@@ -23,7 +27,7 @@ targets:
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         UISupportedInterfaceOrientations~ipad: [UIInterfaceOrientationPortrait]
         UIRequiresFullScreen: true
-        UIBackgroundModes: [audio]
+        UIBackgroundModes: [audio, voip, remote-notification]
         NSCameraUsageDescription: "Камера нужна для видеозвонков Ahazang"
         NSMicrophoneUsageDescription: "Микрофон нужен для звонков Ahazang"
         NSPhotoLibraryUsageDescription: "Доступ к фото нужен, чтобы отправлять снимки и видео в чат"

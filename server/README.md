@@ -73,6 +73,13 @@ DNS: A-запись `ahazang.klegal.ru` → `195.10.205.90` (уже добавл
   («Настройки → Обновление приложения»). Текст изменений берётся из `CHANGES.md` в корне репозитория —
   обновляйте его перед каждой сборкой.
 
-## iPhone
-Приложение Ahazang для iPhone (через TestFlight). Полноэкранный входящий звонок (CallKit) и уведомления
-при закрытом приложении — следующий этап (нужны ключи Apple Developer).
+## iPhone: звонки при закрытом приложении (PushKit + CallKit)
+Сервер будит iPhone VoIP-сигналом через Apple, iOS показывает системный экран входящего звонка.
+Нужен ключ APNs (developer.apple.com → Keys → «+» → Apple Push Notifications service). На сервере:
+
+    nano /opt/ahazang/apns.p8          # вставить весь текст файла AuthKey_XXXXXXXXXX.p8, сохранить
+    chmod 600 /opt/ahazang/apns.p8
+    printf 'APNS_KEY_FILE=/opt/ahazang/apns.p8\nAPNS_KEY_ID=XXXXXXXXXX\nAPNS_TEAM_ID=YYYYYYYYYY\n' >> /opt/ahazang/.env
+    systemctl restart ahazang && journalctl -u ahazang -n 5 --no-pager | grep apns
+
+В журнале должно быть «[apns] включено». Без ключа iPhone получает звонки только при открытом приложении.
