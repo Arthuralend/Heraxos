@@ -1,7 +1,7 @@
 import UIKit
 import WebKit
 
-/// Ahazang внутри приложения: тот же интерфейс, что на сайте, плюс нативное управление звуком звонка.
+/// Ahazang внутри приложения: чаты — встроенный интерфейс, звонки — нативные (CallEngine + CallKit).
 final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDelegate, WKScriptMessageHandler {
 
     private var web: WKWebView!
@@ -28,8 +28,11 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         window.HeraxosAndroid = {
           setSession: function(t, l) { window.webkit.messageHandlers.hx.postMessage({a: 'session', l: String(l), t: String(t)}); },
           clearSession: function() { window.webkit.messageHandlers.hx.postMessage({a: 'clear'}); },
-          setAudioRoute: function(r) { window.webkit.messageHandlers.hx.postMessage({a: 'route', r: String(r)}); },
-          callState: function(on, v, id) { window.webkit.messageHandlers.hx.postMessage({a: 'call', on: !!on, id: String(id || '')}); },
+          nativeCalls: function() { return true; },
+          startCall: function(l, t, v) { window.webkit.messageHandlers.hx.postMessage({a: 'startCall', l: String(l), t: String(t || ''), v: !!v}); },
+          openCall: function() { window.webkit.messageHandlers.hx.postMessage({a: 'openCall'}); },
+          inCall: function() { return false; },
+          callLogReady: function() { window.webkit.messageHandlers.hx.postMessage({a: 'callLog'}); },
           setBars: function(dark) { window.webkit.messageHandlers.hx.postMessage({a: 'bars', dark: !!dark}); },
           fileBegin: function(sid, name, type) { window.webkit.messageHandlers.hx.postMessage({a: 'fileBegin', sid: String(sid), name: String(name)}); },
           fileChunk: function(sid, b64) { window.webkit.messageHandlers.hx.postMessage({a: 'fileChunk', sid: String(sid), b64: String(b64)}); },
@@ -61,14 +64,14 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
     // ---- звонки с системного экрана (CallKit) ----
     func evaluate(_ js: String) { web.evaluateJavaScript(js, completionHandler: nil) }
 
-    /// Ответили на системном экране: если интерфейс уже загружен — отвечаем в нём, иначе открываем сразу на ответ
-    func answerCall(id: String, video: Bool) {
-        let safe = id.filter { $0.isHexDigit }
-        web.evaluateJavaScript("window.hxAnswer ? (hxAnswer('\(safe)', \(video)), 1) : 0") { [weak self] r, _ in
-            guard let self else { return }
-            if (r as? Int) != 1, let url = URL(string: "?answer=\(video ? "video" : "audio")&call=\(safe)", relativeTo: SERVER) {
-                self.web.load(URLRequest(url: url))
-            }
+    /// Журнал нативных звонков → вкладка «Звонки» (удаляем отданные записи, только если интерфейс их принял)
+    func pushCallLog() {
+        let arr = UserDefaults.standard.array(forKey: "callLog") as? [[String: Any]] ?? []
+        guard !arr.isEmpty, let d = try? JSONSerialization.data(withJSONObject: arr), let json = String(data: d, encoding: .utf8) else { return }
+        web.evaluateJavaScript("window.hxNativeLog ? hxNativeLog(\(json)) : false") { r, _ in
+            guard (r as? Bool) == true else { return }
+            let now = UserDefaults.standard.array(forKey: "callLog") as? [[String: Any]] ?? []
+            UserDefaults.standard.set(Array(now.dropFirst(arr.count)), forKey: "callLog")
         }
     }
 
@@ -120,11 +123,10 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         guard let d = message.body as? [String: Any], let a = d["a"] as? String else { return }
         switch a {
-        case "route": AudioRoute.set(d["r"] as? String ?? "off")
-        case "call":
-            let on = d["on"] as? Bool ?? false
-            AudioRoute.keepAlive(on)
-            CallManager.shared.pageCall(on: on, id: d["id"] as? String ?? "")
+        case "startCall":
+            CallManager.shared.startOutgoing(login: d["l"] as? String ?? "", name: d["t"] as? String ?? "", video: d["v"] as? Bool ?? false)
+        case "openCall": CallManager.shared.showCallUI()
+        case "callLog": pushCallLog()
         case "bars":
             darkBars = d["dark"] as? Bool ?? false
             setNeedsStatusBarAppearanceUpdate()
@@ -136,11 +138,15 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         case "fileEnd": fileEnd(d["sid"] as? String ?? "")
         case "session":
             UserDefaults.standard.set(d["l"] as? String, forKey: "login")
+            let changed = UserDefaults.standard.string(forKey: "token") != d["t"] as? String
             UserDefaults.standard.set(d["t"] as? String, forKey: "token")
             sendVoipToken()
+            if changed { Signaling.shared.disconnect() }
+            Signaling.shared.connect()
         case "clear":
             UserDefaults.standard.removeObject(forKey: "login")
             UserDefaults.standard.removeObject(forKey: "token")
+            Signaling.shared.disconnect()
         default: break
         }
     }

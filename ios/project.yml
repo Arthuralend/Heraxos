@@ -1,6 +1,11 @@
 name: Heraxos
 options:
   bundleIdPrefix: am.ahazang
+packages:
+  # WebRTC (сборка Google WebRTC для iOS) — нативные звонки
+  WebRTC:
+    url: https://github.com/stasel/WebRTC
+    exactVersion: "158.0.0"
   deploymentTarget:
     iOS: "15.0"
 targets:
@@ -9,6 +14,8 @@ targets:
     platform: iOS
     sources: [Heraxos]
     scheme: {}
+    dependencies:
+      - package: WebRTC
     entitlements:
       path: Heraxos/Heraxos.entitlements
       properties:
