@@ -2,6 +2,7 @@ import AVFoundation
 import CallKit
 import PushKit
 import UIKit
+import WebRTC
 
 /// Звонки как в WhatsApp: сервер присылает VoIP-сигнал через Apple (PushKit), iOS будит приложение даже
 /// закрытым, звонок показывается на системном экране (CallKit), а сам разговор ведёт нативный модуль
@@ -15,6 +16,10 @@ final class CallManager: NSObject, PKPushRegistryDelegate, CXProviderDelegate {
     private var uuid: UUID?                  // текущий звонок на системном экране
     private var reported = Set<UUID>()
     private var outgoing: (login: String, name: String, video: Bool)?
+    private var stayOut = false                 // звонок из игры — без экрана звонка
+    private var slots: [String: CGRect] = [:]   // окна видео в игре (точки страницы)
+    private var vviews: [String: (view: RTCMTLVideoView, track: RTCVideoTrack?)] = [:]
+    private var lastCallState = ""
     private var poll: Timer?
     weak var web: WebViewController?
     private(set) var voipToken: String?
@@ -127,9 +132,10 @@ final class CallManager: NSObject, PKPushRegistryDelegate, CXProviderDelegate {
     }
 
     /// Звонок из интерфейса (кнопка в чате / контактах)
-    func startOutgoing(login: String, name: String, video: Bool) {
+    func startOutgoing(login: String, name: String, video: Bool, stay: Bool = false) {
         let e = CallEngine.shared
-        if e.busy { showCallUI(); return }
+        if e.busy { if !stay { showCallUI() }; return }
+        stayOut = stay
         let wantVideo = video
         let go = { [weak self] in
             guard let self else { return }
@@ -218,7 +224,8 @@ final class CallManager: NSObject, PKPushRegistryDelegate, CXProviderDelegate {
         provider.reportOutgoingCall(with: action.callUUID, startedConnectingAt: nil)
         let up = callUpdate(o.name.isEmpty ? o.login : o.name, o.video)
         provider.reportCall(with: action.callUUID, updated: up)
-        showCallUI()
+        if !stayOut { showCallUI() }
+        stayOut = false
     }
 
     func provider(_ provider: CXProvider, perform action: CXAnswerCallAction) {
@@ -267,16 +274,103 @@ final class CallManager: NSObject, PKPushRegistryDelegate, CXProviderDelegate {
     }
 
     /// Экран звонка свернули — звонок идёт, сверху зелёная плашка
-    func callUIClosed() { callVC = nil; updatePill() }
+    func callUIClosed() { callVC = nil; updatePill(); updateVideoOverlay() }
+
+    /// Кнопка игр на экране звонка: экран сворачивается, открываются игры с собеседником
+    func openGames(peer: String) {
+        let safe = peer.filter { $0.isLetter || $0.isNumber || "_.-".contains($0) }
+        callVC?.dismiss(animated: true)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            self?.web?.evaluate("window.hxOpenGames && hxOpenGames('\(safe)')")
+        }
+    }
 
     private func engineUpdated() {
         callVC?.refresh()
         updatePill()
+        updateVideoOverlay()
+        pushCallState()
+    }
+
+    // MARK: - Игры во время звонка: видео над доской
+
+    /// Интерфейс сообщил, где в игре окна видео; пустая строка — убрать
+    func setVideoSlots(_ json: String) {
+        slots = [:]
+        if let d = json.data(using: .utf8), let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] {
+            for key in ["remote", "local"] {
+                if let r = o[key] as? [String: Any], let x = r["x"] as? Double, let y = r["y"] as? Double, let w = r["w"] as? Double, let h = r["h"] as? Double {
+                    slots[key] = CGRect(x: x, y: y, width: w, height: h)
+                }
+            }
+        }
+        updateVideoOverlay()
+        updatePill()
+    }
+
+    func gameCamera(_ on: Bool) {
+        if !on { CallEngine.shared.gameCamera(false); return }
+        AVCaptureDevice.requestAccess(for: .video) { ok in
+            DispatchQueue.main.async {
+                if ok { CallEngine.shared.gameCamera(true) } else { self.toast("Нет доступа к камере: Настройки → Ahazang → Камера") }
+            }
+        }
+    }
+
+    /// Страница перезагрузилась — снова сообщим ей состояние звонка
+    func pageLoaded() { lastCallState = ""; pushCallState() }
+
+    private func pushCallState() {
+        let e = CallEngine.shared
+        let active = e.busy && e.state != .ringing
+        let p = e.peers.first
+        let st: [String: Any] = ["active": active, "peer": active ? e.peerLogin : "", "camOn": active && e.camOn,
+                                 "remoteVideo": active && p?.video == true && p?.remoteVideo != nil]
+        guard let d = try? JSONSerialization.data(withJSONObject: st, options: [.sortedKeys]), let json = String(data: d, encoding: .utf8),
+              json != lastCallState else { return }
+        lastCallState = json
+        web?.evaluate("window.hxCallState && hxCallState(\(json))")
+    }
+
+    private func updateVideoOverlay() {
+        let e = CallEngine.shared
+        guard let host = web?.view else { return }
+        let active = UIApplication.shared.applicationState == .active && e.busy && e.state != .ringing && callVC == nil
+        let p = e.peers.first
+        let remote = active && p?.video == true ? p?.remoteVideo : nil
+        let local = active && !slots.isEmpty ? e.localVideo : nil
+        var rr = slots["remote"]
+        if rr == nil, slots.isEmpty, remote != nil { // обычная «картинка в картинке» в углу
+            rr = CGRect(x: host.bounds.width - 116, y: host.safeAreaInsets.top + 48, width: 104, height: 150)
+        }
+        place("remote", remote, rr, host, mirror: false)
+        place("local", local, slots["local"], host, mirror: e.front)
+    }
+
+    private func place(_ key: String, _ track: RTCVideoTrack?, _ rect: CGRect?, _ host: UIView, mirror: Bool) {
+        guard let track, let rect, rect.width > 8 else {
+            if let v = vviews.removeValue(forKey: key) { v.track?.remove(v.view); v.view.removeFromSuperview() }
+            return
+        }
+        var v = vviews[key] ?? {
+            let view = RTCMTLVideoView()
+            view.videoContentMode = .scaleAspectFill
+            view.clipsToBounds = true
+            view.layer.cornerRadius = 14
+            view.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(pillTap)))
+            host.addSubview(view)
+            return (view: view, track: nil)
+        }()
+        if v.track !== track { v.track?.remove(v.view); track.add(v.view); v.track = track }
+        v.view.frame = rect
+        v.view.transform = mirror ? CGAffineTransform(scaleX: -1, y: 1) : .identity
+        host.bringSubviewToFront(v.view)
+        vviews[key] = v
     }
 
     private func updatePill() {
         let e = CallEngine.shared
-        let show = e.busy && e.state != .ringing && callVC == nil
+        let show = e.busy && e.state != .ringing && callVC == nil && slots.isEmpty
         guard show, let win = UIApplication.shared.windows.first(where: { $0.isKeyWindow }) else {
             pill?.removeFromSuperview(); pill = nil
             pillTimer?.invalidate(); pillTimer = nil

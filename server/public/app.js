@@ -1,5 +1,5 @@
 // Ahazang — клиент
-const APP_VERSION = '11';
+const APP_VERSION = '12';
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 let token = localStorage.getItem('hx_token'), me = localStorage.getItem('hx_me');
@@ -35,7 +35,7 @@ window.hxSetVoip = (t) => {
   if (!/^[0-9a-f]{32,200}$/.test(String(t || ''))) return;
   voipToken = t; if (token) api('/api/voip', { token: t }).then((j) => { serverVoip = !!j.voip; }).catch(() => {});
 };
-window.hxBack = () => { if ($('viewer').classList.contains('on')) { closeViewer(); return true; } if ($('info').classList.contains('on')) { $('info').classList.remove('on'); return true; } if (call) return true; if ($('qMenu').classList.contains('on')) { $('qMenu').classList.remove('on'); return true; } if (cur && !matchMedia('(min-width:800px)').matches) { closeChat(); return true; } return false; };
+window.hxBack = () => { if ($('info').classList.contains('on')) { $('info').classList.remove('on'); return true; } if (window.hxGamesBack && hxGamesBack()) return true; if ($('viewer').classList.contains('on')) { closeViewer(); return true; } if ($('info').classList.contains('on')) { $('info').classList.remove('on'); return true; } if (call) return true; if ($('qMenu').classList.contains('on')) { $('qMenu').classList.remove('on'); return true; } if (cur && !matchMedia('(min-width:800px)').matches) { closeChat(); return true; } return false; };
 
 // ---------- номера и имена ----------
 // Внутри приложения человек определяется логином; на экране — имя из вашей телефонной книги или номер.
@@ -261,6 +261,7 @@ async function onWS(m) {
     case 'contacts':
       loadUsers(); loadChats();
       return;
+    case 'game': return window.hxGame && hxGame(m);
     default: return onSignal(m);
   }
 }
@@ -552,6 +553,7 @@ $('bMore').onclick = () => {
   infoSheet(dn(peer), numOf(peer) && numOf(peer) !== dn(peer) ? `<p class="mute">Номер: ${esc(numOf(peer))}</p>` : '', [
     { label: saved ? 'Изменить имя' : 'Сохранить в контакты', primary: true, on: () => askName(peer) },
     saved ? { label: 'Удалить из контактов', on: () => removeContact(peer) } : null,
+    !b && window.hxGames ? { label: '🎮 Сыграть в игру', on: () => hxGames(peer) } : null,
     { label: 'Пожаловаться', on: () => askReport(peer) },
     b ? { label: 'Разблокировать', primary: true, on: () => setBlocked(peer, false) } : { label: 'Заблокировать', danger: true, on: () => askBlock(peer) },
     { label: 'Закрыть' },
@@ -753,11 +755,33 @@ async function subscribePush() {
 // ---------- журнал звонков (только на этом устройстве) ----------
 const callLog = () => JSON.parse(localStorage.getItem('hx_calls_' + me) || '[]');
 function logCall(e) { const l = callLog(); l.unshift(e); localStorage.setItem('hx_calls_' + me, JSON.stringify(l.slice(0, 200))); }
+// долгое нажатие (как в WhatsApp): ~0,5 с без сдвига пальца; на компьютере — правая кнопка мыши
+function onLongPress(el, fn) {
+  let t = null, x = 0, y = 0;
+  const stop = () => { clearTimeout(t); t = null; };
+  el.addEventListener('pointerdown', (e) => { x = e.clientX; y = e.clientY; stop(); t = setTimeout(() => { t = null; try { navigator.vibrate && navigator.vibrate(25); } catch {} fn(); }, 480); });
+  el.addEventListener('pointermove', (e) => { if (t && Math.hypot(e.clientX - x, e.clientY - y) > 10) stop(); });
+  el.addEventListener('pointerup', stop); el.addEventListener('pointercancel', stop); el.addEventListener('pointerleave', stop);
+  el.addEventListener('contextmenu', (e) => { e.preventDefault(); stop(); fn(); });
+}
+// меню звонка из журнала: позвонить, написать, сыграть, заблокировать, удалить запись
+function callMenu(c, idx) {
+  const peer = String(c.peer).split(', ')[0], group = c.group, b = isBlocked(peer);
+  infoSheet(group ? String(c.peer).split(', ').map(dn).join(', ') : dn(peer), numOf(peer) && !group && numOf(peer) !== dn(peer) ? `<p class="mute">Номер: ${esc(numOf(peer))}</p>` : '', [
+    !b ? { label: '📞 Аудиозвонок', primary: true, on: () => startCall(peer, false) } : null,
+    !b ? { label: '🎥 Видеозвонок', on: () => startCall(peer, true) } : null,
+    { label: '💬 Сообщение', on: () => { document.querySelector('#tabbar [data-tab=chats]').click(); openChat(peer); } },
+    !b && window.hxGames ? { label: '🎮 Играть', on: () => hxGames(peer) } : null,
+    b ? { label: 'Разблокировать', on: () => setBlocked(peer, false) } : { label: '🚫 Заблокировать', danger: true, on: () => askBlock(peer) },
+    { label: '🗑 Удалить звонок', danger: true, on: () => { const l = callLog(); l.splice(idx, 1); localStorage.setItem('hx_calls_' + me, JSON.stringify(l)); renderCalls(); } },
+    { label: 'Закрыть' },
+  ].filter(Boolean));
+}
 function renderCalls() {
   if (NATIVE && AND.takeCallLog) try { JSON.parse(AND.takeCallLog() || '[]').sort((a, b) => a.ts - b.ts).forEach((e) => e && e.peer && logCall(e)); } catch {}
   const L = $('callList'), l = callLog();
   L.innerHTML = l.length ? '' : '<div class="empty-list">Звонков пока нет</div>';
-  l.forEach((c) => {
+  l.forEach((c, idx) => {
     const missed = c.dir === 'missed', icon = c.dir === 'out' ? 'i-out' : 'i-in';
     const dur = c.dur ? ` · ${Math.floor(c.dur / 60)}:${pad(c.dur % 60)}` : '';
     const label = ({ out: 'Исходящий', in: 'Входящий', missed: 'Пропущенный' }[c.dir] || 'Звонок') + (c.group ? ' групповой' : '') + (c.video ? ' видеозвонок' : ' звонок');
@@ -765,7 +789,9 @@ function renderCalls() {
     d.innerHTML = `${avaHTML(c.peer)}<div class="body"><div class="top"><b class="${missed ? 'miss' : ''}">${esc(String(c.peer).split(', ').map(dn).join(', '))}</b><time>${fmtList(c.ts)}</time></div>
       <div class="sub"><span><svg class="ic12 ${missed ? 'miss' : ''}" style="width:14px;height:14px"><use href="#${icon}"/></svg> ${label}${dur}</span></div></div>
       <div class="act"><button class="iconbtn"><svg><use href="#${c.video ? 'i-video' : 'i-phone'}"/></svg></button></div>`;
-    d.onclick = () => { if (c.group) return toast('Групповой звонок: позвоните одному и добавьте остальных кнопкой «+»'); startCall(c.peer, c.video); }; L.appendChild(d);
+    d.onclick = () => { if (d.dataset.lp) { delete d.dataset.lp; return; } if (c.group) return toast('Групповой звонок: позвоните одному и добавьте остальных кнопкой «+»'); startCall(c.peer, c.video); };
+    onLongPress(d, () => { d.dataset.lp = '1'; callMenu(c, idx); });
+    L.appendChild(d);
   });
 }
 
@@ -1301,6 +1327,9 @@ function ring(on) {
 const REPO = 'Arthuralend/Heraxos';
 const APK_URL = `https://github.com/${REPO}/releases/latest/download/Ahazang.apk`;
 const WHATS_NEW = [
+  'Игры: шахматы, шашки и танки «Рубеж» — вдвоём или с компьютером. Кнопка 🎮 слева сверху на экране чатов',
+  'Во время звонка можно играть и видеть друг друга: видео собеседника прямо над доской, у кого ход — подсвечено',
+  'В «Звонках» долгое нажатие на запись: позвонить, написать, сыграть, заблокировать или удалить звонок',
   'Звонки теперь работают как в WhatsApp: на заблокированном экране, с системным экраном звонка, громкой связью и Bluetooth (нужно обновить приложение)',
   'У каждого теперь есть номер — смотрите его в «Настройках». Войти можно по логину или по номеру',
   'Контакты как в телефоне: добавьте человека по номеру и сохраните под своим именем — подтверждение не нужно',
@@ -1367,3 +1396,4 @@ async function checkAppUpdate(manual) {
 
 // ---------- старт ----------
 if (token && me) start(); else $('auth').classList.add('on');
+$('bGames').onclick = () => window.hxGames && hxGames('');

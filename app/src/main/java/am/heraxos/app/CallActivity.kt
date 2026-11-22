@@ -52,6 +52,7 @@ class CallActivity : Activity(), CallEngine.Listener {
     private lateinit var bFlip: ImageButton
     private lateinit var bMute: ImageButton
     private lateinit var bAdd: ImageButton
+    private lateinit var bGames: ImageButton
     private var bVideoAnswer: View? = null
 
     private val renderers = HashMap<String, Pair<SurfaceViewRenderer, VideoTrack>>()
@@ -155,6 +156,10 @@ class CallActivity : Activity(), CallEngine.Listener {
 
         bAdd = roundButton(R.drawable.ic_addp, 0x33FFFFFF, 46) { addParticipant() }
         root.addView(bAdd, FrameLayout.LayoutParams(dp(46), dp(46), Gravity.TOP or Gravity.START).apply { topMargin = dp(44); marginStart = dp(14) })
+        // игры во время звонка: экран звонка сворачивается, видео собеседника — над доской
+        bGames = roundButton(R.drawable.ic_game, 0x33FFFFFF, 46) { openGames() }
+        bGames.contentDescription = "Игры"
+        root.addView(bGames, FrameLayout.LayoutParams(dp(46), dp(46), Gravity.TOP or Gravity.START).apply { topMargin = dp(100); marginStart = dp(14) })
 
         // входящий: отклонить / ответить / видео
         incomingRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
@@ -251,11 +256,17 @@ class CallActivity : Activity(), CallEngine.Listener {
         }
     }
 
+    private fun openGames() {
+        startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            .putExtra("games", CallEngine.peerLogin))
+        finish()
+    }
+
     private fun toggleControls() {
         if (!anyVideo()) return
         controlsHidden = !controlsHidden
         val v = if (controlsHidden) View.INVISIBLE else View.VISIBLE
-        activeRow.visibility = v; info.visibility = v; bAdd.visibility = v
+        activeRow.visibility = v; info.visibility = v; bAdd.visibility = v; bGames.visibility = v
     }
 
     private fun anyVideo() = CallEngine.camOn || CallEngine.peers.values.any { it.video && it.remoteVideo != null }
@@ -270,6 +281,7 @@ class CallActivity : Activity(), CallEngine.Listener {
         bVideoAnswer?.visibility = if (e.offerVideo) View.VISIBLE else View.GONE
         activeRow.visibility = if (ringing || ended || controlsHidden) View.GONE else View.VISIBLE
         bAdd.visibility = if (ringing || ended || e.id == null || controlsHidden) View.GONE else View.VISIBLE
+        bGames.visibility = if (ringing || ended || controlsHidden || e.peers.size > 1) View.GONE else View.VISIBLE
 
         setOn(bSpeaker, e.route == "speaker")
         setOn(bCam, e.camOn)

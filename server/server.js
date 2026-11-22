@@ -581,6 +581,14 @@ function leaveRoom(id, me) {
   roomSend(r, { type: 'left', id, login: name(me) });
   maybeEnd(id);
 }
+// не больше ~40 игровых сообщений в секунду от одного человека
+const gameRate = new Map();
+function gameFlood(me) {
+  const now = Date.now(), r = gameRate.get(me) || { t: now, n: 0 };
+  if (now - r.t > 1000) { r.t = now; r.n = 0; }
+  r.n++; gameRate.set(me, r);
+  return r.n > 40;
+}
 const leaveTimers = new Map();
 const reloadSent = new Map(); // token -> когда последний раз просили перезагрузиться
 
@@ -617,6 +625,15 @@ wss.on('connection', (ws, req) => {
 
   ws.on('message', (raw) => {
     let m; try { m = JSON.parse(raw); } catch { return; }
+    // Игры (шахматы, шашки, танки): пересылаем сопернику. Танки шлют до ~20 сообщений в секунду —
+    // у игр свой лимит, чтобы не мешать сообщениям и звонкам
+    if (m.type === 'game') {
+      const to = String(m.to || '').toLowerCase();
+      if (gameFlood(me) || raw.length > 12000 || !to || !canTalk(me, to)) return;
+      if (!isOnline(to)) return ws.send(JSON.stringify({ type: 'game', k: 'offline', g: m.g, from: name(to) }));
+      sendTo(to, { ...m, to: undefined, from: name(me), fromName: dispFor(to, me), fromNum: db.users[me].num });
+      return;
+    }
     if (limited('w' + me, 300)) return;
     const to = String(m.to || '').toLowerCase();
     if (['invite', 'accept', 'reject', 'hangup', 'offer', 'answer', 'reneg'].includes(m.type))
