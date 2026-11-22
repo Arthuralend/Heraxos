@@ -162,6 +162,9 @@ form[hidden]{display:none}
 .composer{display:flex;align-items:flex-end;gap:8px;padding:8px 10px calc(var(--sab) + 8px);background:var(--glass2);border-top:1px solid var(--line)}
 .composer textarea{flex:1;resize:none;border:1px solid var(--line);outline:none;border-radius:20px;padding:10px 16px;background:var(--panel);max-height:140px;font-size:16px;line-height:1.35;transition:.15s}
 .composer textarea:focus{border-color:var(--brand);box-shadow:0 0 0 3px var(--brand-ring)}
+.attbtn{width:44px;height:44px;border:0;border-radius:12px;background:transparent;color:var(--mute);display:grid;place-items:center;flex:none;padding:0}
+.attbtn:active{background:var(--press)}
+.attbtn svg{width:23px;height:23px}
 .sendbtn{width:44px;height:44px;border:0;border-radius:12px;background:var(--brand);color:var(--on-brand);display:grid;place-items:center;flex:none;transition:transform .1s,background .15s}
 .sendbtn:hover{background:var(--brand-d)}
 .sendbtn:active{transform:scale(.92)}
@@ -275,3 +278,32 @@ html.is-android .androidOnly{display:flex!important}
 .sheet.on{transform:none;visibility:visible}
 .sheet-h{display:flex;align-items:center;justify-content:space-between;padding:14px 10px 4px 18px;font-size:18px}
 #addList{overflow-y:auto}
+
+/* ---------- файлы в переписке ---------- */
+.m .b.file{padding:6px 6px 6px 6px;min-width:200px}
+.fcard{display:flex;gap:10px;align-items:center;padding:4px 8px 4px 4px;cursor:pointer}
+.fcard .ficon{width:40px;height:40px;border-radius:10px;background:var(--brand-soft);color:var(--brand);display:grid;place-items:center;flex:none}
+.fcard .ficon svg{width:22px;height:22px}
+.fcard .fi{min-width:0;flex:1}
+.fcard .fi b{display:block;font-weight:600;font-size:14.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:210px}
+.fcard .fi small{color:var(--mute);font-size:12.5px}
+.m .b .thumb{display:block;max-width:240px;max-height:300px;min-width:120px;border-radius:12px;cursor:pointer;background:var(--panel2)}
+.m .b .fbar{height:4px;border-radius:2px;background:var(--line);margin:6px 4px 2px;overflow:hidden}
+.m .b .fbar i{display:block;height:100%;background:var(--brand);transition:width .2s}
+.m .b .ferr{color:var(--red);font-size:12.5px;margin:4px}
+.m.o .fcard .fi small{color:var(--mute)}
+.viewer{position:fixed;inset:0;z-index:28;background:#141413;display:none;flex-direction:column;color:#f5f4ee}
+.viewer.on{display:flex;animation:fade .15s}
+.vbar{display:flex;align-items:center;gap:8px;padding:calc(var(--sat) + 6px) 10px 6px}
+.vbar span{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:15px}
+.vbar .iconbtn{color:#f5f4ee}
+.vbar .pill{background:rgba(245,244,238,.14);border:0;color:#f5f4ee}
+.vbody{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding-bottom:var(--sab)}
+.vbody img,.vbody video{max-width:100%;max-height:100%;object-fit:contain}
+.vbody audio{width:90%}
+
+/* звонок: кнопки уезжают вниз, верхняя строка — вверх (нажатие по экрану в видеозвонке) */
+.ctrl,.ctop{transition:transform .28s ease,opacity .28s ease}
+#call.hide-ui #ctrlOn{transform:translate(-50%,calc(100% + var(--sab) + 40px));opacity:0;pointer-events:none}
+#call.hide-ui .ctop{transform:translateY(calc(-100% - var(--sat) - 20px));opacity:0;pointer-events:none}
+#call.hide-ui .qmenu{display:none}

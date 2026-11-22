@@ -1,6 +1,6 @@
 name: Heraxos
 options:
-  bundleIdPrefix: am.heraxos
+  bundleIdPrefix: am.ahazang
   deploymentTarget:
     iOS: "15.0"
 targets:
@@ -20,14 +20,15 @@ targets:
         UIStatusBarStyle: UIStatusBarStyleDefault
         UIViewControllerBasedStatusBarAppearance: true
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
-        UISupportedInterfaceOrientations~ipad: [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        UISupportedInterfaceOrientations~ipad: [UIInterfaceOrientationPortrait]
+        UIRequiresFullScreen: true
         UIBackgroundModes: [audio]
         NSCameraUsageDescription: "Камера нужна для видеозвонков Ahazang"
         NSMicrophoneUsageDescription: "Микрофон нужен для звонков Ahazang"
         ITSAppUsesNonExemptEncryption: false
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: am.heraxos.app
+        PRODUCT_BUNDLE_IDENTIFIER: am.ahazang.app
         MARKETING_VERSION: "1.0"
         CURRENT_PROJECT_VERSION: "1"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon

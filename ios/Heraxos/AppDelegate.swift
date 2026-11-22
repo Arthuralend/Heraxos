@@ -1,7 +1,7 @@
 import UIKit
 
 /// Адрес сервера Ahazang
-let SERVER = URL(string: "https://82-26-86-235.sslip.io:8445/")!
+let SERVER = URL(string: "https://ahazang.klegal.ru/")!
 
 @main
 final class AppDelegate: UIResponder, UIApplicationDelegate {
