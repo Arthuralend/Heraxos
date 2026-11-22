@@ -46,5 +46,29 @@ const HX = (() => {
     try { return dec.decode(await S.decrypt({ name: 'AES-GCM', iv: unb64(iv) }, await keyFor(peerPub), unb64(ct))); }
     catch { return null; }
   }
-  return { generate, unwrap, load, seal, open, ready: () => !!myPriv };
+  // ---------- файлы ----------
+  // Случайный ключ AES-256-GCM на каждый файл; файл шифруется частями по 1 МБ
+  // (IV части = 8 случайных байт + номер части), так меньше расход памяти на телефоне.
+  const CHUNK = 1024 * 1024, TAG = 16;
+  const ivOf = (base, i) => { const v = new Uint8Array(12); v.set(base); new DataView(v.buffer).setUint32(8, i); return v; };
+  async function sealFile(blob, onProgress) {
+    const raw = crypto.getRandomValues(new Uint8Array(32)), base = crypto.getRandomValues(new Uint8Array(8));
+    const key = await S.importKey('raw', raw, 'AES-GCM', false, ['encrypt']);
+    const parts = [], n = Math.max(1, Math.ceil(blob.size / CHUNK));
+    for (let i = 0; i < n; i++) {
+      const plainPart = await blob.slice(i * CHUNK, (i + 1) * CHUNK).arrayBuffer();
+      parts.push(new Uint8Array(await S.encrypt({ name: 'AES-GCM', iv: ivOf(base, i) }, key, plainPart)));
+      onProgress && onProgress((i + 1) / n);
+    }
+    return { blob: new Blob(parts), k: b64(raw), iv: b64(base) };
+  }
+  async function openFile(buf, k, iv, type) {
+    const key = await S.importKey('raw', unb64(k), 'AES-GCM', false, ['decrypt']), base = unb64(iv);
+    const parts = [], size = CHUNK + TAG;
+    for (let i = 0, off = 0; off < buf.byteLength; i++, off += size) {
+      parts.push(new Uint8Array(await S.decrypt({ name: 'AES-GCM', iv: ivOf(base, i) }, key, buf.slice(off, off + size))));
+    }
+    return new Blob(parts, { type: type || 'application/octet-stream' });
+  }
+  return { generate, unwrap, load, seal, open, sealFile, openFile, ready: () => !!myPriv };
 })();

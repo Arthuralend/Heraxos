@@ -1,5 +1,5 @@
 // Ahazang — клиент
-const APP_VERSION = '7';
+const APP_VERSION = '8';
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 let token = localStorage.getItem('hx_token'), me = localStorage.getItem('hx_me');
@@ -15,7 +15,7 @@ const _qs = new URLSearchParams(location.search);
 let autoAnswer = _qs.get('answer') ? { id: _qs.get('call'), video: _qs.get('answer') === 'video' } : null;
 window.hxAnswer = (id, video) => { if (call && call.id === id && call.dir === 'ring') accept(!!video); else autoAnswer = { id, video: !!video }; };
 window.hxHangup = () => { if (call) endCall(true); };
-window.hxBack = () => { if ($('info').classList.contains('on')) { $('info').classList.remove('on'); return true; } if (call) return true; if ($('qMenu').classList.contains('on')) { $('qMenu').classList.remove('on'); return true; } if (cur && !matchMedia('(min-width:800px)').matches) { closeChat(); return true; } return false; };
+window.hxBack = () => { if ($('viewer').classList.contains('on')) { closeViewer(); return true; } if ($('info').classList.contains('on')) { $('info').classList.remove('on'); return true; } if (call) return true; if ($('qMenu').classList.contains('on')) { $('qMenu').classList.remove('on'); return true; } if (cur && !matchMedia('(min-width:800px)').matches) { closeChat(); return true; } return false; };
 
 // ---------- утилиты ----------
 const COLORS = ['#c96442', '#b5835a', '#8b6f47', '#6a8a82', '#7e8fb8', '#a26b8f', '#5e8c61', '#b8875a', '#8c7aa9', '#c17c74', '#6f8fa6', '#9a7b4f'];
@@ -112,7 +112,8 @@ async function start() {
   // с версии 6 по умолчанию 1080p (снижается автоматически только при слабом интернете)
   if (localStorage.getItem('hx_q_v') !== '2') { localStorage.setItem('hx_q', 'hd'); localStorage.setItem('hx_q_v', '2'); }
   $('defQuality').value = localStorage.getItem('hx_q') || 'hd';
-  if ('serviceWorker' in navigator) {
+  // веб-уведомления нужны только в браузере; в приложениях их присылает Android-служба / Apple
+  if ('serviceWorker' in navigator && !AND) {
     navigator.serviceWorker.register('/sw.js');
     navigator.serviceWorker.addEventListener('message', (e) => e.data && e.data.open && openChat(e.data.open));
   }
@@ -135,7 +136,7 @@ document.querySelectorAll('#tabbar button').forEach((b) => (b.onclick = () => {
 }));
 
 // ---------- WebSocket ----------
-let wsRetry = 1000, wsTimer;
+let wsRetry = 1000, wsTimer, wsQueue = Promise.resolve();
 function connect() {
   if (!token) return;
   clearTimeout(wsTimer);
@@ -153,7 +154,8 @@ function connect() {
     if (e.code === 4001) return logout(true);
     if (token) { wsTimer = setTimeout(connect, wsRetry); wsRetry = Math.min(wsRetry * 2, 8000); }
   };
-  s.onmessage = (e) => onWS(JSON.parse(e.data));
+  // сообщения обрабатываем строго по очереди: иначе ответы на перезапуск связи могут обогнать друг друга
+  s.onmessage = (e) => { let m; try { m = JSON.parse(e.data); } catch { return; } wsQueue = wsQueue.then(() => onWS(m)).catch((x) => D('ws-err', errText(x))); };
 }
 const send = (m) => { if (!ws || ws.readyState !== 1) return false; ws.send(JSON.stringify(m)); return true; };
 document.addEventListener('visibilitychange', () => {
@@ -315,7 +317,7 @@ function renderChats() {
     total += c.unread;
     const mine = c.last.f.toLowerCase() === me.toLowerCase();
     const tick = mine ? (c.last.ts <= c.peerRead ? TICK2 : TICK1) + ' ' : '';
-    const prev = c.preview === null ? '🔒 Сообщение недоступно' : c.preview;
+    const prev = c.preview === null ? '🔒 Сообщение недоступно' : previewOf(c.preview);
     const d = document.createElement('div'); d.className = 'row' + (cur && cur.peer === c.peer ? ' sel' : '');
     d.innerHTML = `${avaHTML(c.peer, online.has(c.peer.toLowerCase()))}<div class="body"><div class="top"><b>${esc(c.peer)}</b><time class="${c.unread ? 'unr' : ''}">${fmtList(c.last.ts)}</time></div>
       <div class="sub"><span>${tick}${esc(prev)}</span>${c.unread ? `<b class="badge">${c.unread}</b>` : ''}</div></div>`;
@@ -376,6 +378,11 @@ function renderMsgs(scroll) {
     const day = fmtDay(m.ts); if (day !== lastDay) { html += `<div class="day"><span>${day}</span></div>`; lastDay = day; lastF = ''; }
     const mine = m.f.toLowerCase() === me.toLowerCase();
     const st = !mine ? '' : m.pending ? CLOCK : m.ts <= cur.peerRead ? TICK2 : TICK1;
+    const f = m.file || fileOf(m.text), i = cur.msgs.indexOf(m);
+    if (f) {
+      html += `<div class="m ${mine ? 'o' : ''} ${m.f !== lastF ? 'first' : ''}"><div class="b file" data-fi="${i}">${fileHTML(f, m)}<span class="meta">${fmtTime(m.ts)} ${st}</span></div></div>`;
+      lastF = m.f; continue;
+    }
     const text = m.text === null ? '<span>🔒 Сообщение недоступно: ключ шифрования изменился</span>' : esc(m.text);
     html += `<div class="m ${mine ? 'o' : ''} ${m.f !== lastF ? 'first' : ''}"><div class="b${m.text === null ? ' lock' : ''}">${text}<span class="meta">${fmtTime(m.ts)} ${st}</span></div></div>`;
     lastF = m.f;
@@ -420,6 +427,129 @@ async function onMessage(m) {
   loadChatsSoon();
 }
 $('bSend').onclick = sendMsg;
+
+// ---------- файлы (сквозное шифрование) ----------
+// Сообщение о файле — обычное зашифрованное сообщение с текстом «HXF1:{...}»: в нём id файла на сервере,
+// ключ и IV для расшифровки, имя, размер, тип и маленькое превью фото. Сам файл на сервере лежит зашифрованным.
+const MAX_FILE_MB = 100;
+const fileOf = (t) => { if (typeof t !== 'string' || !t.startsWith('HXF1:')) return null; try { return JSON.parse(t.slice(5)); } catch { return null; } };
+const kindOf = (f) => (/^image\//.test(f.t) ? 'image' : /^video\//.test(f.t) ? 'video' : /^audio\//.test(f.t) ? 'audio' : 'file');
+function previewOf(t) {
+  const f = fileOf(t); if (!f) return t;
+  return { image: '📷 Фото', video: '🎬 Видео', audio: '🎵 Аудио', file: '📎 ' + f.n }[kindOf(f)];
+}
+const fmtSize = (n) => (n < 1024 ? n + ' Б' : n < 1048576 ? Math.round(n / 1024) + ' КБ' : (n / 1048576).toFixed(n < 10485760 ? 1 : 0) + ' МБ');
+function fileHTML(f, m) {
+  const bar = m.pending && !m.failed ? `<div class="fbar"><i style="width:${Math.round((m.progress || 0) * 100)}%"></i></div>` : '';
+  const err = m.failed ? '<div class="ferr">Не отправлено — нажмите, чтобы повторить</div>' : '';
+  if (typeof f.th === 'string' && /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(f.th)) return `<img class="thumb" src="${f.th}" alt="">${bar}${err}`;
+  const icon = { video: '🎬', audio: '🎵' }[kindOf(f)];
+  return `<div class="fcard"><div class="ficon">${icon ? `<span style="font-size:20px">${icon}</span>` : '<svg><use href="#i-doc"/></svg>'}</div>
+    <div class="fi"><b>${esc(f.n || 'Файл')}</b><small>${fmtSize(f.s || 0)}${m.pending ? ' · отправка…' : ''}</small></div></div>${bar}${err}`;
+}
+let renderT; const renderSoon = () => { clearTimeout(renderT); renderT = setTimeout(() => cur && renderMsgs(), 120); };
+
+// превью фото: до 320 px, JPEG — уходит внутри зашифрованного сообщения
+async function makeThumb(file) {
+  if (!/^image\/(jpeg|png|webp|gif|heic|heif)/.test(file.type)) return null;
+  try {
+    const url = URL.createObjectURL(file), img = new Image();
+    await new Promise((ok, no) => { img.onload = ok; img.onerror = no; img.src = url; });
+    const k = Math.min(1, 320 / Math.max(img.naturalWidth, img.naturalHeight));
+    const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(img.naturalWidth * k)); c.height = Math.max(1, Math.round(img.naturalHeight * k));
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(url);
+    for (const q of [0.6, 0.45, 0.3]) { const d = c.toDataURL('image/jpeg', q); if (d.length < 60000) return d; }
+  } catch {}
+  return null;
+}
+function uploadBlob(blob, peer, onProgress) {
+  return new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest();
+    x.open('POST', '/api/files?to=' + encodeURIComponent(peer.toLowerCase()));
+    x.setRequestHeader('Authorization', 'Bearer ' + token); x.setRequestHeader('Content-Type', 'application/octet-stream');
+    x.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
+    x.onload = () => { let j = {}; try { j = JSON.parse(x.responseText); } catch {} x.status === 200 && j.id ? resolve(j) : reject(new Error(j.error || 'Не удалось отправить файл')); };
+    x.onerror = () => reject(new Error('Нет соединения с сервером'));
+    x.send(blob);
+  });
+}
+async function sendFile(file, m) {
+  if (!cur) return;
+  const peer = cur.peer;
+  if (file.size > MAX_FILE_MB * 1048576) return toast(`Файл больше ${MAX_FILE_MB} МБ`);
+  if (!cur.pub) { cur.pub = await peerKey(peer, true).catch(() => null); if (!cur.pub) return toast('Собеседник ещё ни разу не входил — ключа шифрования пока нет'); }
+  const pub = cur.pub;
+  if (!m) { m = { cid: Math.random().toString(36).slice(2), f: me, ts: Date.now(), text: '', file: { n: file.name, s: file.size, t: file.type || '' }, pending: true, progress: 0, src: file }; cur.msgs.push(m); }
+  m.failed = false; m.pending = true; m.progress = 0; renderMsgs(true);
+  try {
+    const th = await makeThumb(file); if (th) { m.file.th = th; renderSoon(); }
+    const enc = await HX.sealFile(file, (p) => { m.progress = p * 0.25; renderSoon(); });
+    const { id } = await uploadBlob(enc.blob, peer, (p) => { m.progress = 0.25 + p * 0.75; renderSoon(); });
+    const info = { id, k: enc.k, iv: enc.iv, n: file.name, s: file.size, t: file.type || '' }; if (th) info.th = th;
+    m.text = 'HXF1:' + JSON.stringify(info); m.file = info;
+    const { iv, ct } = await HX.seal(pub, m.text);
+    if (!send({ type: 'msg', to: peer, iv, ct, cid: m.cid })) throw new Error('Нет соединения, файл не отправлен');
+    fileCache.set(id, file);
+  } catch (e) { m.failed = true; toast(e.message, 3500); }
+  renderMsgs();
+}
+$('bAttach').onclick = () => { if (!cur) return; $('fileIn').value = ''; $('fileIn').click(); };
+$('fileIn').onchange = () => { for (const f of [...$('fileIn').files]) sendFile(f); };
+
+// скачивание и расшифровка
+const fileCache = new Map(); // id -> Blob (только в памяти, пока открыто приложение)
+async function fetchFile(f) {
+  if (fileCache.has(f.id)) return fileCache.get(f.id);
+  toast('Загрузка…', 60000);
+  try {
+    const r = await fetch('/api/files/' + f.id, { headers: { Authorization: 'Bearer ' + token } });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Файл недоступен');
+    const total = +r.headers.get('content-length') || 0, reader = r.body && r.body.getReader();
+    let buf;
+    if (reader && total) {
+      buf = new Uint8Array(total); let off = 0;
+      for (;;) { const { done, value } = await reader.read(); if (done) break; buf.set(value, off); off += value.length; toast(`Загрузка… ${Math.round(off / total * 100)}%`, 60000); }
+      buf = buf.buffer;
+    } else buf = await r.arrayBuffer();
+    const blob = await HX.openFile(buf, f.k, f.iv, f.t);
+    if (blob.size < 60 * 1048576) fileCache.set(f.id, blob);
+    $('toast').style.display = 'none';
+    return blob;
+  } catch (e) { toast(/operation/i.test(e.message) ? 'Файл повреждён или ключ не подходит' : e.message, 3500); throw e; }
+}
+// Сохранение на телефон: в приложениях — через мост частями (WebView не умеет скачивать blob:), иначе — обычная загрузка
+async function saveBlob(blob, name, type) {
+  if (AND && AND.fileBegin) {
+    const sid = Math.random().toString(36).slice(2), STEP = 768 * 1024;
+    if (AND.fileBegin(sid, name || 'file', type || 'application/octet-stream') === false) return toast('Разрешите доступ к памяти телефона и нажмите ещё раз', 4000);
+    toast('Сохраняю…', 60000);
+    for (let off = 0; off < blob.size; off += STEP) {
+      const b64 = await new Promise((ok) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(',')[1] || ''); r.readAsDataURL(blob.slice(off, off + STEP)); });
+      AND.fileChunk(sid, b64);
+    }
+    AND.fileEnd(sid); $('toast').style.display = 'none';
+    return;
+  }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name || 'file'; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+}
+let viewerUrl = null, viewerFile = null;
+async function openFileMsg(m) {
+  const f = m.file || fileOf(m.text); if (!f) return;
+  if (m.failed && m.src) return sendFile(m.src, m);
+  if (m.pending || !/^[a-f0-9]{32}$/.test(String(f.id || ''))) return;
+  const blob = await fetchFile(f).catch(() => null); if (!blob) return;
+  const kind = kindOf(f);
+  if (kind === 'file') return saveBlob(blob, f.n, f.t);
+  viewerFile = { blob, f }; if (viewerUrl) URL.revokeObjectURL(viewerUrl); viewerUrl = URL.createObjectURL(blob);
+  $('vName').textContent = f.n || '';
+  $('vBody').innerHTML = kind === 'image' ? `<img src="${viewerUrl}" alt="">` : kind === 'video' ? `<video src="${viewerUrl}" controls autoplay playsinline></video>` : `<audio src="${viewerUrl}" controls autoplay></audio>`;
+  $('viewer').classList.add('on'); setBars(true);
+}
+function closeViewer() { if (!call) setBars(false); $('viewer').classList.remove('on'); $('vBody').innerHTML = ''; if (viewerUrl) URL.revokeObjectURL(viewerUrl); viewerUrl = null; viewerFile = null; }
+$('vClose').onclick = closeViewer;
+$('vSave').onclick = () => viewerFile && saveBlob(viewerFile.blob, viewerFile.f.n, viewerFile.f.t);
+$('msgs').addEventListener('click', (e) => { const b = e.target.closest('[data-fi]'); if (b && cur) openFileMsg(cur.msgs[+b.dataset.fi]); });
 let lastTyping = 0;
 $('txt').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey && matchMedia('(min-width:800px)').matches) { e.preventDefault(); sendMsg(); }
@@ -487,14 +617,16 @@ const Q = {
 // FEC + RED (повтор пакетов) — речь не «булькает» при потерях в мобильной сети.
 const AUDIO = { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1, sampleRate: 48000 };
 const AUDIO_BR = 64_000;
-const VIDEO_START_KBPS = 1500; // стартуем сразу с хорошего качества, а не с 300 кбит/с
+const VIDEO_START_KBPS = 800; // старт с запасом для голоса; дальше WebRTC сам поднимает до 1080p, если канал позволяет
 const MAX_CALL = 5;
 
 function mungeOpus(sdp) {
   const m = sdp.match(/a=rtpmap:(\d+) opus\/48000\/2/i); if (!m) return sdp;
-  const pt = m[1], want = `minptime=10;useinbandfec=1;usedtx=0;stereo=0;sprop-stereo=0;maxplaybackrate=48000;sprop-maxcapturerate=48000;maxaveragebitrate=${AUDIO_BR};cbr=0`;
+  const pt = m[1], want = `minptime=20;useinbandfec=1;usedtx=0;stereo=0;sprop-stereo=0;maxplaybackrate=48000;sprop-maxcapturerate=48000;maxaveragebitrate=${AUDIO_BR};cbr=0`;
   const re = new RegExp(`a=fmtp:${pt} .*`, 'i');
-  return re.test(sdp) ? sdp.replace(re, `a=fmtp:${pt} ${want}`) : sdp.replace(m[0], `${m[0]}\r\na=fmtp:${pt} ${want}`);
+  sdp = re.test(sdp) ? sdp.replace(re, `a=fmtp:${pt} ${want}`) : sdp.replace(m[0], `${m[0]}\r\na=fmtp:${pt} ${want}`);
+  // пакеты по 20 мс: устойчивее к потерям в мобильной сети, чем 10 мс
+  return /a=ptime:/.test(sdp) ? sdp.replace(/a=ptime:\d+/g, 'a=ptime:20') : sdp.replace(/(a=rtpmap:\d+ opus\/48000\/2[^\r\n]*)/i, '$1\r\na=ptime:20');
 }
 function mungeVideoStart(sdp) {
   const pts = [], re = /a=rtpmap:(\d+) (VP8|VP9|H264)\/90000/gi; let m;
@@ -638,12 +770,17 @@ function flushIce(p) { p.ice.forEach((c) => p.pc.addIceCandidate(c).catch(() => 
 async function applySenderParams(only) {
   if (!call) return;
   const group = call.peers.size > 1, q = Q[call.q];
-  const vbr = group ? Math.min(q.br, 700_000) : q.br; // в группе экономим исходящий канал
+  const vbr = group ? Math.min(q.br, 1_000_000) : q.br; // в группе экономим исходящий канал: видео до 540p
   for (const p of only ? [only] : call.peers.values()) for (const sd of p.pc.getSenders()) {
     if (!sd.track) continue;
     const prm = sd.getParameters(); if (!prm.encodings || !prm.encodings.length) prm.encodings = [{}];
     if (sd.track.kind === 'audio') { prm.encodings[0].maxBitrate = AUDIO_BR; prm.encodings[0].priority = 'high'; prm.encodings[0].networkPriority = 'high'; }
-    else { prm.encodings[0].maxBitrate = vbr; prm.encodings[0].maxFramerate = q.fps; prm.encodings[0].scaleResolutionDownBy = 1; prm.degradationPreference = 'maintain-framerate'; }
+    else {
+      const h = (sd.track.getSettings && sd.track.getSettings().height) || q.h;
+      prm.encodings[0].maxBitrate = vbr; prm.encodings[0].maxFramerate = q.fps;
+      prm.encodings[0].scaleResolutionDownBy = group ? Math.max(1, h / 540) : 1;
+      prm.degradationPreference = 'maintain-framerate';
+    }
     // Safari может отклонить degradationPreference целиком — тогда применяем хотя бы битрейт и частоту кадров
     try { await sd.setParameters(prm); } catch { try { delete prm.degradationPreference; await sd.setParameters(prm); } catch {} }
   }
@@ -672,13 +809,32 @@ function layout() {
   $('bFlip').style.display = lv ? '' : 'none';
   $('bQuality').style.display = lv || anyV ? '' : 'none';
   $('bAdd').style.display = call.dir === 'ring' ? 'none' : '';
+  // кнопки прячутся только в видеозвонке; в аудиозвонке всегда на месте
+  call.videoMode = (anyV || lv) && call.dir !== 'ring';
+  if (!call.videoMode) showControls(false); else if (!call.uiTimer && !c.classList.contains('hide-ui')) scheduleHideUI();
   if (n <= 1) {
     const who = peers[0] ? peers[0].login : [...call.pending.values()][0]?.dataset.name || call.title;
     $('callName').textContent = who; avatar($('callAva'), who);
   }
 }
 
+// ---------- кнопки звонка: нажатие по экрану прячет/показывает, в видео — прячутся сами через 5 с ----------
+function scheduleHideUI() {
+  clearTimeout(call && call.uiTimer);
+  if (!call || !call.videoMode) return;
+  call.uiTimer = setTimeout(() => { if (call && call.videoMode && !$('qMenu').classList.contains('on') && !$('addSheet').classList.contains('on')) $('call').classList.add('hide-ui'); if (call) call.uiTimer = null; }, 5000);
+}
+function showControls(autoHide) { $('call').classList.remove('hide-ui'); if (autoHide) scheduleHideUI(); else if (call) { clearTimeout(call.uiTimer); call.uiTimer = null; } }
+$('call').addEventListener('click', (e) => {
+  if (!call || !call.videoMode) return;
+  if (e.target.closest('.ctrl,.ctop,.qmenu,.sheet,#local,button')) { scheduleHideUI(); return; }
+  if ($('call').classList.contains('hide-ui')) showControls(true);
+  else { clearTimeout(call.uiTimer); call.uiTimer = null; $('call').classList.add('hide-ui'); }
+});
+function setBars(dark) { try { AND && AND.setBars && AND.setBars(!!dark); } catch {} }
+
 function showCallScreen(state) {
+  setBars(true);
   const c = $('call'); c.classList.add('on');
   $('ctrlIn').classList.toggle('on', state === 'incoming');
   $('ctrlOn').classList.toggle('on', state !== 'incoming');
@@ -694,6 +850,7 @@ async function getMedia(video) {
   return navigator.mediaDevices.getUserMedia({ audio: AUDIO, video: video ? camConstraints(call.q, call.facing) : false });
 }
 function newCall(o) {
+  qPrev.clear(); $('call').classList.remove('hide-ui');
   call = Object.assign({ peers: new Map(), pending: new Map(), q: localStorage.getItem('hx_q') || 'hd', facing: 'user', route: 'earpiece' }, o);
   $('grid').innerHTML = ''; $('cTimer').textContent = ''; $('qBadge').textContent = '';
   $('call').classList.remove('video-on', 'connected', 'multi', 'one-v');
@@ -729,6 +886,7 @@ function startTimer() {
     const lost = [...call.peers.values()].some((p) => p.lost);
     $('cTimer').textContent = lost ? 'Переподключение…' : t; if (call.peers.size <= 1) $('callState').textContent = lost ? 'Переподключение…' : t;
     if (s % 3 === 0) updateQBadge();
+    if (s % 15 === 0) logQuality();
   }, 1000);
 }
 
@@ -814,7 +972,7 @@ function endCall(notify, delay = 0, noLog) {
   audioSessionOff();
   setTimeout(() => {
     if (call) return;
-    $('call').classList.remove('on', 'video-on', 'connected', 'multi', 'one-v');
+    $('call').classList.remove('on', 'video-on', 'connected', 'multi', 'one-v', 'hide-ui'); setBars(false);
     $('qMenu').classList.remove('on'); $('addSheet').classList.remove('on'); $('grid').innerHTML = '';
     renderCalls();
     if (reloadAfterCall) hardReload();
@@ -895,6 +1053,34 @@ $('bAdd').onclick = async () => {
 };
 $('bAddClose').onclick = () => $('addSheet').classList.remove('on');
 
+// Замер качества для журнала сервера: потери и рывки звука, задержка, путь (напрямую или через сервер)
+const qPrev = new Map();
+async function logQuality() {
+  if (!call) return;
+  for (const p of call.peers.values()) {
+    try {
+      const st = await p.pc.getStats(); let pair = null, aIn = null, vOut = null, vIn = null;
+      st.forEach((r) => {
+        if (r.type === 'transport' && r.selectedCandidatePairId) pair = st.get(r.selectedCandidatePairId);
+        if (r.type === 'candidate-pair' && r.nominated && r.state === 'succeeded' && !pair) pair = r;
+        if (r.type === 'inbound-rtp' && r.kind === 'audio') aIn = r;
+        if (r.type === 'inbound-rtp' && r.kind === 'video') vIn = r;
+        if (r.type === 'outbound-rtp' && r.kind === 'video') vOut = r;
+      });
+      const lc = pair && st.get(pair.localCandidateId), rc = pair && st.get(pair.remoteCandidateId);
+      const prev = qPrev.get(p.login) || {}, rec = aIn ? aIn.packetsReceived : 0, lost = aIn ? aIn.packetsLost : 0;
+      const dRec = rec - (prev.rec || 0), dLost = lost - (prev.lost || 0);
+      qPrev.set(p.login, { rec, lost });
+      const path = lc && rc ? (lc.candidateType === 'relay' || rc.candidateType === 'relay' ? 'через сервер' : 'напрямую') + '/' + (lc.relayProtocol || lc.protocol || '') : '?';
+      D('quality', [p.login, path,
+        'rtt ' + (pair && pair.currentRoundTripTime != null ? Math.round(pair.currentRoundTripTime * 1000) + 'мс' : '?'),
+        'звук: потери ' + (dRec + dLost > 0 ? (dLost / (dRec + dLost) * 100).toFixed(1) : '0') + '%, джиттер ' + (aIn && aIn.jitter != null ? Math.round(aIn.jitter * 1000) + 'мс' : '?'),
+        vIn && vIn.frameHeight ? 'видео приём ' + vIn.frameHeight + 'p ' + Math.round(vIn.framesPerSecond || 0) + 'к/с' : '',
+        vOut && vOut.frameHeight ? 'видео отправка ' + vOut.frameHeight + 'p' : '',
+        pair && pair.availableOutgoingBitrate ? 'канал ' + Math.round(pair.availableOutgoingBitrate / 1000) + 'кбит/с' : ''].filter(Boolean).join(' · '));
+    } catch {}
+  }
+}
 async function updateQBadge() {
   const p = call && [...call.peers.values()][0]; if (!p) return;
   let v = '', rtt = '', codec = '';
@@ -925,13 +1111,12 @@ function ring(on) {
 const REPO = 'Arthuralend/Heraxos';
 const APK_URL = `https://github.com/${REPO}/releases/latest/download/Ahazang.apk`;
 const WHATS_NEW = [
-  'Новое название — Ahazang и новая иконка. Логины, контакты и переписка сохранены',
-  'Звонок не обрывается, когда вы сворачиваете приложение — например, переключаетесь на Яндекс Карты',
-  'Связь сама восстанавливается при смене сети (Wi-Fi ↔ мобильный интернет)',
-  'Видео сразу в 1080p; качество снижается только при слабом интернете',
-  'Звук: защита от потерь пакетов (RED + FEC) — речь не «булькает» в мобильной сети',
-  'Светлый тёплый дизайн',
-  'Уведомление о новых версиях приложения прямо в «Настройках»',
+  'Отправка файлов, фото и видео (до 100 МБ) со сквозным шифрованием: на сервере они лежат только в зашифрованном виде',
+  'Во время видеозвонка нажмите на экран — кнопки спрячутся, нажмите ещё раз — появятся. Сами прячутся через 5 секунд',
+  'Голос в приоритете над видео: меньше обрывов и «бульканья» в мобильной сети',
+  'Групповые видеозвонки легче для телефона: видео в группе до 540p',
+  'Только вертикальный режим экрана; на Android 15 интерфейс больше не залезает под строку состояния',
+  'Новый сервер ahazang.klegal.ru; Ahazang работает только в приложениях для Android и iPhone',
 ];
 const androidVersion = () => { try { return AND && AND.appVersion ? +AND.appVersion() || 0 : 0; } catch { return 0; } };
 function infoSheet(title, html, actions) {

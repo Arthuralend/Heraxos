@@ -205,7 +205,8 @@ class CallService : Service() {
         val myGen = ++gen
         val url = BuildConfig.SERVER.replaceFirst("https://", "wss://").replaceFirst("http://", "ws://") +
             "/ws?bg=1&token=" + Uri.encode(token)
-        ws = client.newWebSocket(Request.Builder().url(url).build(), object : WebSocketListener() {
+        val req = Request.Builder().url(url).header("User-Agent", "AhazangApp/1.0 (Android; service)").build()
+        ws = client.newWebSocket(req, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) { backoff = 1000L }
             override fun onMessage(webSocket: WebSocket, text: String) {
                 val m = runCatching { JSONObject(text) }.getOrNull() ?: return

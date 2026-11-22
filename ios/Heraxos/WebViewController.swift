@@ -5,14 +5,22 @@ import WebKit
 final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDelegate, WKScriptMessageHandler {
 
     private var web: WKWebView!
+    private var darkBars = false
+    private var saves: [String: (url: URL, handle: FileHandle)] = [:]
 
-    override var preferredStatusBarStyle: UIStatusBarStyle { .default }
+    override var preferredStatusBarStyle: UIStatusBarStyle {
+        if #available(iOS 13.0, *) { return darkBars ? .lightContent : .darkContent }
+        return darkBars ? .lightContent : .default
+    }
+    override var supportedInterfaceOrientations: UIInterfaceOrientationMask { .portrait }
 
     override func loadView() {
         let cfg = WKWebViewConfiguration()
         cfg.allowsInlineMediaPlayback = true
         cfg.mediaTypesRequiringUserActionForPlayback = []
         cfg.websiteDataStore = .default()
+        // метка приложения: сервер отдаёт интерфейс и API только приложениям Ahazang
+        cfg.applicationNameForUserAgent = "Mobile/15E148 AhazangApp/1.0 (iOS)"
 
         // Мост к веб-приложению (тот же интерфейс, что у Android-версии)
         let shim = """
@@ -21,7 +29,11 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
           setSession: function(t, l) { window.webkit.messageHandlers.hx.postMessage({a: 'session', l: String(l)}); },
           clearSession: function() { window.webkit.messageHandlers.hx.postMessage({a: 'clear'}); },
           setAudioRoute: function(r) { window.webkit.messageHandlers.hx.postMessage({a: 'route', r: String(r)}); },
-          callState: function(on, v, id) { window.webkit.messageHandlers.hx.postMessage({a: 'call', on: !!on}); }
+          callState: function(on, v, id) { window.webkit.messageHandlers.hx.postMessage({a: 'call', on: !!on}); },
+          setBars: function(dark) { window.webkit.messageHandlers.hx.postMessage({a: 'bars', dark: !!dark}); },
+          fileBegin: function(sid, name, type) { window.webkit.messageHandlers.hx.postMessage({a: 'fileBegin', sid: String(sid), name: String(name)}); },
+          fileChunk: function(sid, b64) { window.webkit.messageHandlers.hx.postMessage({a: 'fileChunk', sid: String(sid), b64: String(b64)}); },
+          fileEnd: function(sid) { window.webkit.messageHandlers.hx.postMessage({a: 'fileEnd', sid: String(sid)}); }
         };
         """
         cfg.userContentController.addUserScript(WKUserScript(source: shim, injectionTime: .atDocumentStart, forMainFrameOnly: true))
@@ -81,10 +93,42 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         switch a {
         case "route": AudioRoute.set(d["r"] as? String ?? "off")
         case "call": AudioRoute.keepAlive(d["on"] as? Bool ?? false)
+        case "bars":
+            darkBars = d["dark"] as? Bool ?? false
+            setNeedsStatusBarAppearanceUpdate()
+        case "fileBegin": fileBegin(d["sid"] as? String ?? "", d["name"] as? String ?? "file")
+        case "fileChunk":
+            if let sid = d["sid"] as? String, let b64 = d["b64"] as? String, let s = saves[sid], let data = Data(base64Encoded: b64) {
+                s.handle.write(data)
+            }
+        case "fileEnd": fileEnd(d["sid"] as? String ?? "")
         case "session": UserDefaults.standard.set(d["l"] as? String, forKey: "login")
         case "clear": UserDefaults.standard.removeObject(forKey: "login")
         default: break
         }
+    }
+
+    // ---- сохранение расшифрованного файла: временный файл → меню «Поделиться» (Сохранить в Файлы / Фото) ----
+    private func fileBegin(_ sid: String, _ rawName: String) {
+        let bad = CharacterSet(charactersIn: "/\\:*?\"<>|")
+        var name = rawName.components(separatedBy: bad).joined(separator: "_").trimmingCharacters(in: .whitespaces)
+        if name.isEmpty { name = "file" }
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("ahazang", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent(String(name.prefix(120)))
+        try? FileManager.default.removeItem(at: url)
+        guard FileManager.default.createFile(atPath: url.path, contents: nil),
+              let h = try? FileHandle(forWritingTo: url) else { return }
+        saves[sid] = (url, h)
+    }
+
+    private func fileEnd(_ sid: String) {
+        guard let s = saves.removeValue(forKey: sid) else { return }
+        s.handle.closeFile()
+        let share = UIActivityViewController(activityItems: [s.url], applicationActivities: nil)
+        share.popoverPresentationController?.sourceView = view
+        share.popoverPresentationController?.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.maxY - 40, width: 1, height: 1)
+        present(share, animated: true)
     }
 
     // ---- alert / confirm / prompt из веб-приложения ----

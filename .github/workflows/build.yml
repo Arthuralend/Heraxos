@@ -21,7 +21,16 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
+      # Ключ подписи хранится в секретах репозитория (Settings → Secrets and variables → Actions)
+      - name: Ключ подписи
+        env:
+          KS: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+        run: |
+          if [ -z "$KS" ]; then echo "::error::Нет секрета ANDROID_KEYSTORE_B64 (ключ подписи Android) — см. README"; exit 1; fi
+          echo "$KS" | base64 -d > app/ahazang.jks
       - name: Сборка
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: gradle assembleRelease --no-daemon --stacktrace
       # Ahazang.apk — новое имя; Heraxos.apk — копия, чтобы старые ссылки продолжали работать
       - run: cp app/build/outputs/apk/release/app-release.apk Ahazang.apk && cp Ahazang.apk Heraxos.apk

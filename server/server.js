@@ -14,7 +14,7 @@ const envFile = path.join(__dirname, '.env');
 if (fs.existsSync(envFile)) for (const line of fs.readFileSync(envFile, 'utf8').split('\n')) {
   const m = line.match(/^\s*([A-Z_]+)\s*=\s*(.*?)\s*$/); if (m && !process.env[m[1]]) process.env[m[1]] = m[2];
 }
-const PORT = +(process.env.PORT || 8445);
+const PORT = +(process.env.PORT || 443);
 const DOMAIN = process.env.DOMAIN || 'localhost';
 const TURN_SECRET = process.env.TURN_SECRET || 'change-me';
 const TURN_HOST = process.env.TURN_HOST || DOMAIN;
@@ -51,7 +51,22 @@ app.set('trust proxy', false);
 app.use(express.json({ limit: '256kb' }));
 app.use((req, res, next) => { res.set({ 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY' }); next(); });
 // Версия веб-приложения: устаревшие клиенты получают команду перезагрузиться
-const APP_VERSION = '7';
+const APP_VERSION = '8';
+// ---------- доступ: интерфейс и API только для приложений Ahazang ----------
+// Приложения (Android/iPhone) добавляют к User-Agent метку «AhazangApp/». Браузер вместо интерфейса получает
+// страницу «Скачайте приложение». Админка открыта в браузере (по паролю; можно ограничить IP через ADMIN_IPS).
+// ALLOW_WEB=1 в .env временно открывает интерфейс и для браузера.
+const isApp = (req) => process.env.ALLOW_WEB === '1' || /AhazangApp\//.test(req.headers['user-agent'] || '');
+const ADMIN_IPS = (process.env.ADMIN_IPS || '').split(/[\s,]+/).filter(Boolean);
+const ipOf = (req) => String(req.ip || req.socket.remoteAddress || '').replace(/^::ffff:/, '');
+const adminIpOk = (req) => !ADMIN_IPS.length || ADMIN_IPS.includes(ipOf(req));
+const PUBLIC_FILES = /^\/(get\.html|logo\.png|favicon\.png|icon-\d+\.png)$/;
+app.use((req, res, next) => {
+  if (req.path === '/admin.html' || req.path.startsWith('/api/admin/')) return adminIpOk(req) ? next() : res.status(404).end();
+  if (isApp(req) || PUBLIC_FILES.test(req.path)) return next();
+  if (req.path.startsWith('/api/')) return res.status(403).json({ error: 'Ahazang работает только в приложении' });
+  res.set('Cache-Control', 'no-store'); res.sendFile(path.join(__dirname, 'public', 'get.html'));
+});
 // HTML/JS/CSS не кэшируются вовсе (Safari на iPhone иначе может держать старый app.js), картинки — с проверкой
 app.use(express.static(path.join(__dirname, 'public'), { maxAge: 0, etag: true, setHeaders: (res, file) =>
   res.set('Cache-Control', /\.(html|js|css|json)$/.test(file) ? 'no-store, must-revalidate' : 'no-cache') }));
@@ -202,6 +217,56 @@ app.post('/api/diag', (req, res) => {
     String(b.url || '').slice(0, 80), '|', String(b.info || '').slice(0, 600).replace(/\s+/g, ' '), '|', String(b.ua || '').slice(0, 200));
   res.status(204).end();
 });
+// ---------- файлы: на сервере только зашифрованные данные ----------
+// Телефон шифрует файл случайным ключом (AES-256-GCM) и загружает шифротекст; ключ уходит собеседнику
+// внутри зашифрованного сообщения. Сервер не может открыть файл.
+const FILES_DIR = path.join(__dirname, 'data', 'files');
+fs.mkdirSync(FILES_DIR, { recursive: true });
+db.files ||= {};
+const MAX_FILE = (+process.env.MAX_FILE_MB || 100) * 1024 * 1024 + 64 * 1024; // + служебные байты шифрования
+const FILE_DAYS = +process.env.FILE_DAYS || 365;
+const fileMeta = (id) => (/^[a-f0-9]{32}$/.test(id) ? db.files[id] : null);
+function dropFile(id) { delete db.files[id]; fs.rm(path.join(FILES_DIR, id), { force: true }, () => {}); }
+app.post('/api/files', auth, (req, res) => {
+  const to = String(req.query.to || '').toLowerCase(), len = +req.headers['content-length'];
+  if (!isContact(req.me, to)) return res.status(403).json({ error: 'Файлы можно отправлять только контактам' });
+  if (!len) return res.status(411).json({ error: 'Пустой файл' });
+  if (len > MAX_FILE) return res.status(413).json({ error: `Файл больше ${process.env.MAX_FILE_MB || 100} МБ` });
+  if (limited('f' + req.me, 60)) return res.status(429).json({ error: 'Слишком много файлов, подождите минуту' });
+  const id = crypto.randomBytes(16).toString('hex'), tmp = path.join(FILES_DIR, id + '.part');
+  const out = fs.createWriteStream(tmp, { mode: 0o600 });
+  let got = 0, failed = false;
+  const fail = (code, msg) => { if (failed) return; failed = true; out.destroy(); fs.rm(tmp, { force: true }, () => {}); if (!res.headersSent) res.status(code).json({ error: msg }); };
+  req.on('data', (c) => { got += c.length; if (got > MAX_FILE) { fail(413, 'Файл слишком большой'); req.destroy(); } });
+  req.on('aborted', () => fail(400, 'Загрузка прервана'));
+  out.on('error', () => fail(500, 'Не удалось сохранить файл'));
+  req.pipe(out);
+  out.on('finish', () => {
+    if (failed) return;
+    if (got !== len) return fail(400, 'Загрузка прервана');
+    fs.rename(tmp, path.join(FILES_DIR, id), (e) => {
+      if (e) return fail(500, 'Не удалось сохранить файл');
+      db.files[id] = { o: req.me, t: to, s: got, ts: Date.now() }; save();
+      res.json({ id });
+    });
+  });
+});
+app.get('/api/files/:id', auth, (req, res) => {
+  const f = fileMeta(req.params.id);
+  if (!f || (f.o !== req.me && f.t !== req.me)) return res.status(404).json({ error: 'Файл не найден или срок хранения истёк' });
+  res.set({ 'Content-Type': 'application/octet-stream', 'Cache-Control': 'no-store' });
+  res.sendFile(path.join(FILES_DIR, req.params.id), (e) => e && !res.headersSent && res.status(404).end());
+});
+// Файлы старше FILE_DAYS дней и недогруженные куски удаляются
+setInterval(() => {
+  const old = Date.now() - FILE_DAYS * 864e5; let n = 0;
+  for (const [id, f] of Object.entries(db.files)) if (f.ts < old || !db.users[f.o] || !db.users[f.t]) { dropFile(id); n++; }
+  for (const name of fs.readdirSync(FILES_DIR)) if (name.endsWith('.part')) {
+    try { if (Date.now() - fs.statSync(path.join(FILES_DIR, name)).mtimeMs > 3600e3) fs.rmSync(path.join(FILES_DIR, name)); } catch {}
+  }
+  if (n) save();
+}, 3600e3);
+
 app.get('/api/ice', auth, (req, res) => {
   const username = `${Math.floor(Date.now() / 1000) + 12 * 3600}:${req.me}`;
   const credential = crypto.createHmac('sha1', TURN_SECRET).update(username).digest('base64');
@@ -223,6 +288,9 @@ app.post('/api/admin/login', (req, res) => {
   const p = Buffer.from((req.body && req.body.password) || ''), a = Buffer.from(ADMIN_PASSWORD);
   if (!ADMIN_PASSWORD || p.length !== a.length || !crypto.timingSafeEqual(p, a)) return res.status(401).json({ error: 'Неверный пароль' });
   const t = crypto.randomBytes(24).toString('hex'); adminTokens.set(t, Date.now() + 30 * 60000); res.json({ token: t });
+});
+app.get('/api/admin/stats', admin, (req, res) => {
+  const files = Object.values(db.files); res.json({ users: Object.keys(db.users).length, files: files.length, bytes: files.reduce((a, f) => a + f.s, 0) });
 });
 app.get('/api/admin/users', admin, (req, res) => {
   res.json(Object.entries(db.users).map(([k, u]) => ({ login: u.login, created: u.created, lastSeen: u.lastSeen || 0, online: isOnline(k) }))
@@ -254,6 +322,7 @@ app.delete('/api/admin/users/:login', admin, (req, res) => {
   for (const k of C(db.users[key]).contacts) if (db.users[k]) { const U = C(db.users[k]); del(U.contacts, key); del(U.requests, key); del(U.sent, key); }
   for (const U of Object.values(db.users)) { C(U); del(U.contacts, key); del(U.requests, key); del(U.sent, key); }
   delete db.users[key];
+  for (const [id, f] of Object.entries(db.files)) if (f.o === key || f.t === key) dropFile(id);
   for (const pk of Object.keys(db.msgs)) if (pk.split('|').includes(key)) { delete db.msgs[pk]; delete db.reads[pk]; }
   save(); res.json({ ok: true });
 });
@@ -352,6 +421,7 @@ const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 256 * 1024 })
 wss.on('connection', (ws, req) => {
   const q = new URL(req.url, 'http://x').searchParams, me = db.tokens[q.get('token')];
   if (!me || !db.users[me]) return ws.close(4001, 'auth');
+  if (!isApp(req)) return ws.close(4003, 'app only');
   ws.bg = q.get('bg') === '1';
   console.log('[ws]', me, ws.bg ? 'фон (Android-служба)' : 'страница v' + q.get('v'), String(req.headers['user-agent'] || '').slice(0, 120));
   // Устаревший клиент перезагружаем, но не чаще раза в 2 минуты — чтобы не было бесконечной перезагрузки,
