@@ -37,7 +37,8 @@ jobs:
           rm ks.b64
           # пароль мог вставиться с пробелами, переносом или соседним текстом — пробуем варианты
           OK=""
-          for cand in "$PW" "$(printf '%s' "$PW" | tr -d ' \r\n\t')" $(printf '%s' "$PW" | grep -oE '[A-Za-z0-9]{12,64}'); do
+          # кандидаты: пароль как есть, без пробелов, «слова» из обоих секретов (если секреты перепутаны или вставлен весь файл)
+          for cand in "$PW" "$(printf '%s' "$PW" | tr -d ' \r\n\t')" $( { printf '%s\n' "$PW"; printf '%s\n' "$KS"; } | grep -oE '(^|[^A-Za-z0-9+/=])[A-Za-z0-9]{16,40}($|[^A-Za-z0-9+/=])' | grep -oE '[A-Za-z0-9]{16,40}' | sort -u); do
             if keytool -list -keystore app/ahazang.jks -storepass "$cand" -alias ahazang >/dev/null 2>&1; then OK="$cand"; break; fi
           done
           [ -n "$OK" ] || { echo "::error::Ключ не открывается: в секрете ANDROID_KEYSTORE_PASSWORD неверный пароль (длина $(printf '%s' "$PW" | wc -c) символов, ожидается 24)"; exit 1; }
