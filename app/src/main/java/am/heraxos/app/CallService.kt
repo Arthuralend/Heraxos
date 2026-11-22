@@ -255,6 +255,11 @@ class CallService : Service() {
     }
 
     // ---------- входящий звонок ----------
+    /** Вызов, который уже звонил в открытом приложении, после сворачивания продолжает звонить через систему */
+    fun ringFromPage(id: String, from: String, title: String, video: Boolean) {
+        if (currentCall != id) showIncoming(id, from, title.ifEmpty { from }, video)
+    }
+
     private fun showIncoming(id: String, from: String, title: String, video: Boolean) {
         if (id.isEmpty()) return
         currentCall = id; currentFrom = from; currentTitle = title; currentVideo = video

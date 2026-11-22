@@ -362,6 +362,19 @@ class MainActivity : Activity() {
         @JavascriptInterface
         fun setBars(dark: Boolean) { runOnUiThread { this@MainActivity.setBars(dark) } }
 
+        /** Приложение свернули во время входящего — дальше звонит система (полноэкранный вызов и рингтон) */
+        @JavascriptInterface
+        fun ringNative(id: String, from: String, title: String, video: Boolean) {
+            if (!ID_RE.matches(id)) return
+            runOnUiThread { CallService.instance?.ringFromPage(id, from, title, video) }
+        }
+
+        /** Страница на экране сама показывает входящий и звонит — системный рингтон этого вызова выключаем */
+        @JavascriptInterface
+        fun pageRinging(id: String) {
+            runOnUiThread { CallService.instance?.let { if (it.currentCall == id) it.cancelIncoming(false) } }
+        }
+
         @JavascriptInterface
         fun appVersion(): Int = BuildConfig.VERSION_CODE
 

@@ -183,6 +183,11 @@ function connect() {
 }
 const send = (m) => { if (!ws || ws.readyState !== 1) return false; ws.send(JSON.stringify(m)); return true; };
 document.addEventListener('visibilitychange', () => {
+  // приложение свернули во время входящего — дальше звонит система; открыли — звонит страница
+  if (call && call.dir === 'ring') {
+    if (!document.hidden) ring(true);
+    else if (AND && AND.ringNative) { try { AND.ringNative(call.id, call.title, dn(call.title), !!call.offerVideo); } catch {} ring(false); }
+  }
   if (document.hidden || !token) return;
   if (!ws || ws.readyState > 1) { wsRetry = 1000; connect(); }
   if (call) for (const p of call.peers.values()) if (p.lost) restartIce(p);
@@ -1238,11 +1243,19 @@ async function updateQBadge() {
 function clearCallNotes() {
   navigator.serviceWorker && navigator.serviceWorker.ready.then((r) => r.getNotifications().then((ns) => ns.forEach((n) => n.data && n.data.kind === 'call' && n.close()))).catch(() => {});
 }
+// Рингтон входящего. В Android-приложении, пока оно свёрнуто, звонит только система (уведомление о звонке):
+// страница в фоне может не успеть получить «звонок окончен», и её рингтон играл бы дальше.
+// Когда приложение на экране — звонит страница, а системный рингтон этого вызова выключается.
+let ringTimer;
 function ring(on) {
-  clearCallNotes();
+  clearCallNotes(); clearTimeout(ringTimer);
   const a = $('ring');
-  if (on) { a.currentTime = 0; a.play().catch(() => {}); navigator.vibrate && navigator.vibrate([800, 400, 800, 400, 800, 400, 800, 400, 800]); }
-  else { a.pause(); navigator.vibrate && navigator.vibrate(0); }
+  if (on && AND && document.hidden) { a.pause(); return; }
+  if (on) {
+    a.currentTime = 0; a.play().catch(() => {}); navigator.vibrate && navigator.vibrate([800, 400, 800, 400, 800, 400, 800, 400, 800]);
+    try { AND && AND.pageRinging && call && call.id && AND.pageRinging(call.id); } catch {}
+    ringTimer = setTimeout(() => ring(false), 60000); // подстраховка: дольше минуты не звоним
+  } else { a.pause(); navigator.vibrate && navigator.vibrate(0); }
 }
 
 // ---------- версии, обновления, «Что нового» ----------
