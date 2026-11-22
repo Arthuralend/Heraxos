@@ -1,0 +1,71 @@
+name: iPhone → TestFlight
+
+# Подписанная сборка и загрузка в TestFlight. Нужны секреты репозитория
+# (Settings → Secrets and variables → Actions):
+#   APPLE_TEAM_ID   — Team ID (10 символов, developer.apple.com → Membership)
+#   ASC_KEY_ID      — Key ID ключа App Store Connect API
+#   ASC_ISSUER_ID   — Issuer ID (там же, над списком ключей)
+#   ASC_KEY_P8      — всё содержимое файла AuthKey_XXXX.p8 (вместе со строками BEGIN/END)
+# Сертификат и профиль Xcode создаёт сам через этот ключ (роль ключа — Admin).
+
+on:
+  push:
+    branches: [main]
+    paths: ['ios/**', '.github/workflows/ios-testflight.yml']
+  workflow_dispatch:
+
+jobs:
+  testflight:
+    runs-on: macos-latest
+    env:
+      TEAM: ${{ secrets.APPLE_TEAM_ID }}
+      KID: ${{ secrets.ASC_KEY_ID }}
+      ISS: ${{ secrets.ASC_ISSUER_ID }}
+      P8: ${{ secrets.ASC_KEY_P8 }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ключ App Store Connect
+        run: |
+          for v in TEAM KID ISS P8; do
+            [ -n "${!v}" ] || { echo "::error::Нет секрета для $v (APPLE_TEAM_ID / ASC_KEY_ID / ASC_ISSUER_ID / ASC_KEY_P8)"; exit 1; }
+          done
+          mkdir -p "$HOME/.appstoreconnect/private_keys"
+          printf '%s\n' "$P8" > "$HOME/.appstoreconnect/private_keys/AuthKey_$KID.p8"
+          echo "KEYPATH=$HOME/.appstoreconnect/private_keys/AuthKey_$KID.p8" >> "$GITHUB_ENV"
+          xcodebuild -version
+
+      - name: Проект (XcodeGen)
+        run: brew install xcodegen && cd ios && xcodegen generate
+
+      - name: Сборка и подпись
+        run: |
+          set -o pipefail
+          cd ios
+          xcodebuild archive -project Heraxos.xcodeproj -scheme Heraxos -configuration Release \
+            -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/Ahazang.xcarchive" \
+            CODE_SIGNING_ALLOWED=YES CODE_SIGN_STYLE=Automatic DEVELOPMENT_TEAM="$TEAM" \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            -allowProvisioningUpdates -authenticationKeyPath "$KEYPATH" \
+            -authenticationKeyID "$KID" -authenticationKeyIssuerID "$ISS" | tail -60
+
+      - name: Загрузка в TestFlight
+        run: |
+          set -o pipefail
+          cat > "$RUNNER_TEMP/export.plist" <<E
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>teamID</key><string>$TEAM</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>uploadSymbols</key><true/>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+          </dict></plist>
+          E
+          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/Ahazang.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/export.plist" -exportPath "$RUNNER_TEMP/out" \
+            -allowProvisioningUpdates -authenticationKeyPath "$KEYPATH" \
+            -authenticationKeyID "$KID" -authenticationKeyIssuerID "$ISS" | tail -40
+          echo "Сборка ${{ github.run_number }} загружена. Через 5–15 минут она появится в App Store Connect → TestFlight."

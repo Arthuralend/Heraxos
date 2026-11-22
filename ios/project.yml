@@ -8,6 +8,7 @@ targets:
     type: application
     platform: iOS
     sources: [Heraxos]
+    scheme: {}
     info:
       path: Heraxos/Info.plist
       properties:
@@ -25,6 +26,8 @@ targets:
         UIBackgroundModes: [audio]
         NSCameraUsageDescription: "Камера нужна для видеозвонков Ahazang"
         NSMicrophoneUsageDescription: "Микрофон нужен для звонков Ahazang"
+        NSPhotoLibraryUsageDescription: "Доступ к фото нужен, чтобы отправлять снимки и видео в чат"
+        NSPhotoLibraryAddUsageDescription: "Доступ нужен, чтобы сохранять полученные фото и видео"
         ITSAppUsesNonExemptEncryption: false
     settings:
       base:
@@ -36,3 +39,5 @@ targets:
         SWIFT_VERSION: "5.0"
         CODE_SIGNING_ALLOWED: "NO"
         GENERATE_INFOPLIST_FILE: "NO"
+        # для TestFlight подпись включает сборка на GitHub (ios-testflight.yml): CODE_SIGNING_ALLOWED=YES + DEVELOPMENT_TEAM
+        CODE_SIGN_STYLE: Automatic
