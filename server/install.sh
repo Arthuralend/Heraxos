@@ -14,7 +14,17 @@ IP=${IP:-$(getent ahostsv4 "$DOMAIN" | awk '{print $1; exit}')}
 [ -n "$IP" ] || { echo "Домен $DOMAIN не найден в DNS. Добавьте A-запись на IP этого сервера и повторите."; exit 1; }
 MYIPS=$(hostname -I 2>/dev/null || true)
 echo "$DOMAIN → $IP"
-case " $MYIPS " in *" $IP "*) ;; *) echo "Внимание: $IP не найден среди адресов сервера ($MYIPS). Если сервер за NAT — это нормально.";; esac
+# защита от запуска не на той машине: адрес домена должен быть адресом этого сервера
+PUBIP=$(curl -s --max-time 5 https://api.ipify.org || true)
+case " $MYIPS $PUBIP " in
+  *" $IP "*) ;;
+  *) if [ "$ALLOW_NAT" != 1 ]; then
+       echo "СТОП: $DOMAIN указывает на $IP, а это сервер с адресами: $MYIPS ${PUBIP:+(внешний $PUBIP)}."
+       echo "Похоже, вы не на том сервере. Зайдите на $IP (ssh root@$IP) и запустите скрипт там."
+       echo "Ничего не изменено. (Если сервер действительно за NAT: ALLOW_NAT=1 sudo -E bash install.sh)"
+       exit 1
+     fi;;
+esac
 
 echo "== Пакеты"
 export DEBIAN_FRONTEND=noninteractive
@@ -25,11 +35,12 @@ if ! command -v node >/dev/null || [ "$(node -v | cut -c2- | cut -d. -f1)" -lt 2
 fi
 echo "Node $(node -v)"
 
-systemctl stop ahazang coturn 2>/dev/null || true
 echo "== Проверка портов"
+systemctl stop ahazang 2>/dev/null || true
 for p in 80 $PORT 3478 5349; do
-  if ss -lntu | grep -qE "[:.]$p\s"; then echo "Порт $p занят другой программой:"; ss -lntup | grep -E "[:.]$p\s"; exit 1; fi
+  if ss -lntup | grep -E "[:.]$p\s" | grep -qv '"turnserver"'; then echo "Порт $p занят другой программой:"; ss -lntup | grep -E "[:.]$p\s"; exit 1; fi
 done
+systemctl stop coturn 2>/dev/null || true
 
 echo "== Файлы"
 mkdir -p $DIR/data
