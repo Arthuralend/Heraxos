@@ -43,6 +43,9 @@ const LOGIN_RE = /^[a-zA-Z0-9_.\-а-яА-ЯёЁ]{3,24}$/;
 const name = (k) => (db.users[k] ? db.users[k].login : k);
 const C = (u) => { u.contacts ||= []; u.requests ||= []; u.sent ||= []; return u; };
 const isContact = (a, b) => !!(db.users[a] && db.users[b] && C(db.users[a]).contacts.includes(b) && C(db.users[b]).contacts.includes(a));
+// блокировка: заблокированный не может писать, звонить, отправлять файлы и заявки (в обе стороны)
+const blocks = (a, b) => !!(db.users[a] && (db.users[a].blocked || []).includes(b));
+const canTalk = (a, b) => isContact(a, b) && !blocks(a, b) && !blocks(b, a);
 const del = (arr, x) => { const i = arr.indexOf(x); if (i >= 0) arr.splice(i, 1); };
 
 // ---------- HTTP ----------
@@ -51,7 +54,7 @@ app.set('trust proxy', false);
 app.use(express.json({ limit: '256kb' }));
 app.use((req, res, next) => { res.set({ 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY' }); next(); });
 // Версия веб-приложения: устаревшие клиенты получают команду перезагрузиться
-const APP_VERSION = '8';
+const APP_VERSION = '9';
 // ---------- доступ: интерфейс и API только для приложений Ahazang ----------
 // Приложения (Android/iPhone) добавляют к User-Agent метку «AhazangApp/». Браузер вместо интерфейса получает
 // страницу «Скачайте приложение». Админка открыта в браузере (по паролю; можно ограничить IP через ADMIN_IPS).
@@ -60,7 +63,7 @@ const isApp = (req) => process.env.ALLOW_WEB === '1' || /AhazangApp\//.test(req.
 const ADMIN_IPS = (process.env.ADMIN_IPS || '').split(/[\s,]+/).filter(Boolean);
 const ipOf = (req) => String(req.ip || req.socket.remoteAddress || '').replace(/^::ffff:/, '');
 const adminIpOk = (req) => !ADMIN_IPS.length || ADMIN_IPS.includes(ipOf(req));
-const PUBLIC_FILES = /^\/(get\.html|logo\.png|favicon\.png|icon-\d+\.png)$/;
+const PUBLIC_FILES = /^\/(get\.html|privacy\.html|terms\.html|logo\.png|favicon\.png|icon-\d+\.png)$/;
 app.use((req, res, next) => {
   if (req.path === '/admin.html' || req.path.startsWith('/api/admin/')) return adminIpOk(req) ? next() : res.status(404).end();
   if (isApp(req) || PUBLIC_FILES.test(req.path)) return next();
@@ -128,6 +131,7 @@ app.get('/api/contacts', auth, (req, res) => {
     contacts: u.contacts.filter(ok).map(pub).sort((x, y) => x.login.localeCompare(y.login)),
     requests: u.requests.filter(ok).map(name),
     sent: u.sent.filter(ok).map(name),
+    blocked: (u.blocked || []).filter(ok).map(name),
   });
 });
 function makeMutual(a, b) {
@@ -142,6 +146,7 @@ app.post('/api/contacts/add', auth, (req, res) => {
   const M = C(db.users[me]), T = C(db.users[t]);
   if (isContact(me, t)) return res.json({ status: 'contact' });
   if (M.requests.includes(t)) { makeMutual(me, t); save(); sendTo(t, { type: 'contacts' }); return res.json({ status: 'contact' }); }
+  if (blocks(t, me)) return res.json({ status: 'sent' }); // заблокировавший вас не получит заявку
   if (!M.sent.includes(t)) M.sent.push(t);
   if (!T.requests.includes(me)) {
     T.requests.push(me);
@@ -217,6 +222,42 @@ app.post('/api/diag', (req, res) => {
     String(b.url || '').slice(0, 80), '|', String(b.info || '').slice(0, 600).replace(/\s+/g, ' '), '|', String(b.ua || '').slice(0, 200));
   res.status(204).end();
 });
+// ---------- блокировка и жалобы ----------
+app.post('/api/block', auth, (req, res) => {
+  const t = String((req.body && req.body.login) || '').toLowerCase(), u = db.users[req.me];
+  if (!db.users[t] || t === req.me) return res.status(404).json({ error: 'Нет пользователя' });
+  u.blocked ||= []; if (!u.blocked.includes(t)) u.blocked.push(t);
+  const U = C(u); del(U.requests, t); // входящая заявка от заблокированного больше не висит
+  // идущий звонок с ним завершается
+  for (const [id, r] of rooms) if (r.members.has(req.me) && (r.members.has(t) || r.invited.has(t))) leaveRoom(id, req.me);
+  save(); res.json({ ok: true });
+});
+app.post('/api/unblock', auth, (req, res) => {
+  const t = String((req.body && req.body.login) || '').toLowerCase(), u = db.users[req.me];
+  if (u.blocked) del(u.blocked, t); save(); res.json({ ok: true });
+});
+// Жалоба: сервер не может читать переписку, поэтому текст последних сообщений (по желанию) присылает сам жалующийся
+db.reports ||= [];
+app.post('/api/report', auth, (req, res) => {
+  if (limited('rep' + req.me, 10)) return res.status(429).json({ error: 'Слишком много жалоб, подождите минуту' });
+  const b = req.body || {}, t = String(b.login || '').toLowerCase();
+  if (!db.users[t] || t === req.me) return res.status(404).json({ error: 'Нет пользователя' });
+  const msgs = (Array.isArray(b.messages) ? b.messages : []).slice(-10).map((m) => ({
+    f: String(m.f || '').slice(0, 40), ts: +m.ts || 0, text: String(m.text || '').slice(0, 1000) }));
+  const rep = { id: crypto.randomBytes(6).toString('hex'), from: name(req.me), about: name(t), reason: String(b.reason || '').slice(0, 200),
+    note: String(b.note || '').slice(0, 1000), messages: msgs, ts: Date.now(), status: 'new' };
+  db.reports.push(rep); if (db.reports.length > 2000) db.reports.splice(0, db.reports.length - 2000);
+  console.log('[report]', rep.from, '→', rep.about, rep.reason);
+  save(); res.json({ ok: true });
+});
+// Удаление своего аккаунта (обязательно для App Store): подтверждение паролем
+app.post('/api/account/delete', auth, async (req, res) => {
+  if (limited('del' + req.me, 5)) return res.status(429).json({ error: 'Слишком много попыток, подождите минуту' });
+  const u = db.users[req.me];
+  if (!(await bcrypt.compare(String((req.body && req.body.password) || ''), u.hash))) return res.status(403).json({ error: 'Неверный пароль' });
+  deleteUser(req.me); res.json({ ok: true });
+});
+
 // ---------- файлы: на сервере только зашифрованные данные ----------
 // Телефон шифрует файл случайным ключом (AES-256-GCM) и загружает шифротекст; ключ уходит собеседнику
 // внутри зашифрованного сообщения. Сервер не может открыть файл.
@@ -229,7 +270,7 @@ const fileMeta = (id) => (/^[a-f0-9]{32}$/.test(id) ? db.files[id] : null);
 function dropFile(id) { delete db.files[id]; fs.rm(path.join(FILES_DIR, id), { force: true }, () => {}); }
 app.post('/api/files', auth, (req, res) => {
   const to = String(req.query.to || '').toLowerCase(), len = +req.headers['content-length'];
-  if (!isContact(req.me, to)) return res.status(403).json({ error: 'Файлы можно отправлять только контактам' });
+  if (!canTalk(req.me, to)) return res.status(403).json({ error: 'Файл не отправлен: пользователь недоступен' });
   if (!len) return res.status(411).json({ error: 'Пустой файл' });
   if (len > MAX_FILE) return res.status(413).json({ error: `Файл больше ${process.env.MAX_FILE_MB || 100} МБ` });
   if (limited('f' + req.me, 60)) return res.status(429).json({ error: 'Слишком много файлов, подождите минуту' });
@@ -318,13 +359,23 @@ app.post('/api/admin/reset', admin, async (req, res) => {
 });
 app.delete('/api/admin/users/:login', admin, (req, res) => {
   const key = req.params.login.toLowerCase(); if (!db.users[key]) return res.status(404).json({ error: 'Нет пользователя' });
+  deleteUser(key); res.json({ ok: true });
+});
+// Полное удаление пользователя: аккаунт, сессии, связи, переписка, файлы, участие в звонках
+function deleteUser(key) {
+  for (const [id, r] of rooms) if (r.members.has(key)) leaveRoom(id, key);
   dropSessions(key);
-  for (const k of C(db.users[key]).contacts) if (db.users[k]) { const U = C(db.users[k]); del(U.contacts, key); del(U.requests, key); del(U.sent, key); }
-  for (const U of Object.values(db.users)) { C(U); del(U.contacts, key); del(U.requests, key); del(U.sent, key); }
+  for (const U of Object.values(db.users)) { C(U); del(U.contacts, key); del(U.requests, key); del(U.sent, key); if (U.blocked) del(U.blocked, key); }
+  for (const k of Object.keys(db.users)) if (k !== key) sendTo(k, { type: 'contacts' });
   delete db.users[key];
   for (const [id, f] of Object.entries(db.files)) if (f.o === key || f.t === key) dropFile(id);
   for (const pk of Object.keys(db.msgs)) if (pk.split('|').includes(key)) { delete db.msgs[pk]; delete db.reads[pk]; }
-  save(); res.json({ ok: true });
+  save();
+}
+app.get('/api/admin/reports', admin, (req, res) => res.json(db.reports.slice().reverse()));
+app.post('/api/admin/reports/:id/close', admin, (req, res) => {
+  const r = db.reports.find((x) => x.id === req.params.id); if (!r) return res.status(404).json({ error: 'Нет жалобы' });
+  r.status = 'closed'; save(); res.json({ ok: true });
 });
 
 // ---------- WebSocket ----------
@@ -452,7 +503,7 @@ wss.on('connection', (ws, req) => {
       console.log('[call]', m.type, me + (ws.bg ? '(фон)' : ''), to ? '→ ' + to : '', m.id ? 'id=' + m.id : '');
     switch (m.type) {
       case 'msg': { // зашифрованное сообщение
-        if (!isContact(me, to) || typeof m.ct !== 'string' || typeof m.iv !== 'string' || m.ct.length > 200000) return;
+        if (!canTalk(me, to) || typeof m.ct !== 'string' || typeof m.iv !== 'string' || m.ct.length > 200000) return ws.send(JSON.stringify({ type: 'error', text: canTalk(me, to) ? 'Сообщение не отправлено' : 'Сообщение не доставлено: пользователь недоступен' }));
         const pk = pairKey(me, to), msg = { id: crypto.randomBytes(8).toString('hex'), f: me, ts: Date.now(), iv: m.iv, ct: m.ct };
         (db.msgs[pk] ||= []).push(msg); if (db.msgs[pk].length > 5000) db.msgs[pk].splice(0, 1000); save();
         ws.send(JSON.stringify({ type: 'sent', cid: m.cid, id: msg.id, ts: msg.ts, to: name(to) }));
@@ -461,11 +512,11 @@ wss.on('connection', (ws, req) => {
         pushTo(to, { title: name(me), body: '🔒 Новое сообщение', from: name(me), kind: 'msg' });
         break;
       }
-      case 'typing': if (isContact(me, to)) sendTo(to, { type: 'typing', from: name(me) }); break;
+      case 'typing': if (canTalk(me, to)) sendTo(to, { type: 'typing', from: name(me) }); break;
       case 'invite': {
         let id = m.id && String(m.id), r = id && rooms.get(id);
         if (id && (!r || !r.members.has(me))) return;
-        if (!isContact(me, to)) return ws.send(JSON.stringify({ type: 'error', text: 'Звонить можно только контактам' }));
+        if (!canTalk(me, to)) return ws.send(JSON.stringify({ type: 'error', text: isContact(me, to) ? 'Абонент недоступен' : 'Звонить можно только контактам' }));
         if (r && (r.members.has(to) || r.invited.has(to))) return;
         if (r && r.members.size + r.invited.size >= MAX_CALL) return ws.send(JSON.stringify({ type: 'error', text: 'В звонке может быть не больше 5 человек' }));
         if (!r) {
