@@ -29,8 +29,9 @@ jobs:
         run: |
           [ -n "$PW" ] || { echo "::error::Секрет ANDROID_KEYSTORE_PASSWORD пустой или не добавлен (Settings → Secrets and variables → Actions → Repository secrets)"; exit 1; }
           [ -n "$KS" ] || { echo "::error::Секрет ANDROID_KEYSTORE_B64 пустой или не добавлен (Settings → Secrets and variables → Actions → Repository secrets)"; exit 1; }
-          # при вставке строка могла получить пробелы или переносы — убираем
-          printf '%s' "$KS" | tr -d ' \r\n\t' > ks.b64
+          # при вставке строка могла получить пробелы, переносы или лишний текст вокруг —
+          # берём самую длинную непрерывную base64-строку
+          printf '%s' "$KS" | tr -d '\r\n\t ' | grep -oE '[A-Za-z0-9+/]{200,}={0,2}' | awk '{ if (length($0) > length(m)) m = $0 } END { printf "%s", m }' > ks.b64
           echo "Длина ANDROID_KEYSTORE_B64: $(wc -c < ks.b64) символов (ожидается 5732)"
           base64 -d ks.b64 > app/ahazang.jks 2>/dev/null || { echo "::error::ANDROID_KEYSTORE_B64 испорчен при копировании (не base64). Вставьте строку из файла ANDROID_KEYSTORE_B64.txt целиком"; exit 1; }
           rm ks.b64
