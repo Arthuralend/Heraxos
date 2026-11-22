@@ -11,7 +11,7 @@
   const GAMES = {
     chess: { title: 'Шахматы', sub: 'Классика: мат, пат, рокировка, взятие на проходе', ai: true },
     checkers: { title: 'Шашки', sub: 'Русские шашки: бить обязательно, дамка ходит далеко', ai: true },
-    tanks: { title: 'Танки «Рубеж»', sub: '3D, вдвоём против вражеской колонны. Защитите ядро!', ai: false, solo: true },
+    tanks: { title: 'Танчики 3D', sub: 'Защитите штаб вдвоём: по сети друг с другом или одному', ai: false, solo: true },
   };
 
   // ---------- иконки ----------
@@ -642,36 +642,35 @@
   }
 
   // =====================================================================
-  // Танки — отдельный файл (3D), загружается при первом запуске
+  // «Танчики 3D» (игра из репозитория Tanks3D) — в окне-iframe; ходы и снимки поля идут через сервер
   // =====================================================================
-  let tanksLoading = null;
-  function loadTanks() {
-    if (window.HXTanks) return Promise.resolve();
-    return tanksLoading ||= new Promise((ok, fail) => {
-      const s = document.createElement('script');
-      s.src = '/games-tanks.js?v=' + (typeof APP_VERSION !== 'undefined' ? APP_VERSION : '1');
-      s.onload = ok; s.onerror = () => { tanksLoading = null; fail(new Error('load')); };
-      document.head.appendChild(s);
-    });
-  }
-  async function startTanks(sess) {
-    show(`<div class="g-wait"><div class="g-dots"><i></i><i></i><i></i></div><p class="mute">Загружаем танки…</p></div>`);
-    try { await loadTanks(); await window.HXTanks.ready(); }
-    catch (e) { toast('Не удалось загрузить игру, проверьте интернет'); S = null; openHub(''); return; }
-    if (S !== sess) return;
-    show(`<div class="t-root"></div>`);
-    sess.ctrl = window.HXTanks.start(root.querySelector('.t-root'), {
-      sess,
-      me, peerName: sess.peer ? dn(sess.peer) : '',
-      send: (o) => gsend(o, sess),
-      bar: playerBar, callCtlHTML,
-      camButton, refreshVideoUI,
-      exit: () => { if (S === sess) { leaveGame(true); openHub(''); } },
-      askLeave,
-      again: () => { const peer = sess.peer; leaveGame(false); if (peer) invite('tanks', peer); else startGame({ id: rid(), kind: 'tanks', peer: '', solo: true, host: true, color: 'w' }); },
-      toast,
-    });
+  function startTanks(sess) {
+    const role = !sess.peer ? 'solo' : sess.host ? 'host' : 'guest';
+    show(`<div class="t3-root">
+      ${sess.peer ? `<div class="t3-top">
+        <div class="vslot t3-v" data-who="opp">${avaHTML(sess.peer, false)}</div>
+        <div class="t3-names"><b>${esc(dn(sess.peer))}</b><small>${role === 'host' ? 'зелёный танк · вы — жёлтый' : 'жёлтый танк · вы — зелёный'}</small></div>
+        ${callCtlHTML()}
+        <div class="vslot t3-v" data-who="me">${avaHTML(me, false)}</div></div>` : ''}
+      <iframe class="t3-frame" src="/tanks3d/index.html?embed=1&v=${typeof APP_VERSION !== 'undefined' ? APP_VERSION : 1}" allow="autoplay; fullscreen"></iframe></div>`);
+    const fr = root.querySelector('.t3-frame');
+    const post = (o) => { try { fr.contentWindow.postMessage(o, location.origin); } catch {} };
+    const onMsg = (e) => {
+      if (e.source !== fr.contentWindow || e.origin !== location.origin) return;
+      const d = e.data || {};
+      if (d.t === 'ready') post({ t: 'start', role });
+      else if (d.t === 'send' && d.m && sess.peer) gsend(d.m, sess);
+      else if (d.t === 'exit') { if (S === sess) { leaveGame(true); openHub(''); } }
+    };
+    window.addEventListener('message', onMsg);
+    callControls();
+    sess.ctrl = {
+      onNet: (m) => post({ t: 'net', m }),
+      peerLeft: () => post({ t: 'peerLeft' }),
+      destroy: () => { window.removeEventListener('message', onMsg); try { fr.src = 'about:blank'; } catch {} },
+    };
     refreshVideoUI();
   }
+
 
 })();
