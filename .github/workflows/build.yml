@@ -35,13 +35,17 @@ jobs:
           echo "Длина ANDROID_KEYSTORE_B64: $(wc -c < ks.b64) символов (ожидается 5732)"
           base64 -d ks.b64 > app/ahazang.jks 2>/dev/null || { echo "::error::ANDROID_KEYSTORE_B64 испорчен при копировании (не base64). Вставьте строку из файла ANDROID_KEYSTORE_B64.txt целиком"; exit 1; }
           rm ks.b64
-          keytool -list -keystore app/ahazang.jks -storepass "$PW" -alias ahazang >/dev/null 2>&1 \
-            || { echo "::error::Ключ не открывается: неверный ANDROID_KEYSTORE_PASSWORD или ANDROID_KEYSTORE_B64 скопирован не полностью"; exit 1; }
+          # пароль мог вставиться с пробелами, переносом или соседним текстом — пробуем варианты
+          OK=""
+          for cand in "$PW" "$(printf '%s' "$PW" | tr -d ' \r\n\t')" $(printf '%s' "$PW" | grep -oE '[A-Za-z0-9]{12,64}'); do
+            if keytool -list -keystore app/ahazang.jks -storepass "$cand" -alias ahazang >/dev/null 2>&1; then OK="$cand"; break; fi
+          done
+          [ -n "$OK" ] || { echo "::error::Ключ не открывается: в секрете ANDROID_KEYSTORE_PASSWORD неверный пароль (длина $(printf '%s' "$PW" | wc -c) символов, ожидается 24)"; exit 1; }
+          echo "::add-mask::$OK"
+          echo "KS_PASS=$OK" >> "$GITHUB_ENV"
           echo "Ключ подписи в порядке"
       - name: Сборка
-        env:
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-        run: gradle assembleRelease --no-daemon --stacktrace
+        run: ANDROID_KEYSTORE_PASSWORD="$KS_PASS" gradle assembleRelease --no-daemon --stacktrace
       # Ahazang.apk — новое имя; Heraxos.apk — копия, чтобы старые ссылки продолжали работать
       - run: cp app/build/outputs/apk/release/app-release.apk Ahazang.apk && cp Ahazang.apk Heraxos.apk
       - uses: actions/upload-artifact@v4
