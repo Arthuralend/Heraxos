@@ -84,7 +84,7 @@ const del = (arr, x) => { const i = arr.indexOf(x); if (i >= 0) arr.splice(i, 1)
 const app = express();
 app.set('trust proxy', false);
 app.use(express.json({ limit: '256kb' }));
-app.use((req, res, next) => { res.set({ 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY' }); next(); });
+app.use((req, res, next) => { res.set({ 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'SAMEORIGIN' }); next(); });
 // Версия веб-приложения: устаревшие клиенты получают команду перезагрузиться
 const APP_VERSION = '10';
 // ---------- доступ: интерфейс и API только для приложений Ahazang ----------
