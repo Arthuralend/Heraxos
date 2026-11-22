@@ -1,5 +1,5 @@
 // Ahazang — клиент
-const APP_VERSION = '10';
+const APP_VERSION = '11';
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 let token = localStorage.getItem('hx_token'), me = localStorage.getItem('hx_me');
@@ -8,6 +8,9 @@ let ws, iceServers = [], users = [], chats = [], cur = null, call = null, reload
 const peerKeys = new Map(), online = new Set(), lastSeen = new Map();
 // Android-приложение Ahazang (WebView) даёт мост window.HeraxosAndroid
 const AND = window.HeraxosAndroid || null;
+// Нативные звонки (новые версии приложений): интерфейс только начинает звонок — дальше всё ведёт
+// приложение (WebRTC + системный экран звонка), как в WhatsApp. Старые версии звонят из интерфейса.
+const NATIVE = (() => { try { return !!(AND && AND.nativeCalls && AND.nativeCalls()); } catch { return false; } })();
 const D = (ev, info) => { try { window.hxDiag && hxDiag(ev, info); } catch {} };
 const errText = (e) => (e && (e.name ? e.name + ': ' : '') + (e.message || e)) || String(e);
 if (/Android/i.test(navigator.userAgent) && !AND) document.documentElement.classList.add('is-android');
@@ -15,6 +18,15 @@ const _qs = new URLSearchParams(location.search);
 let autoAnswer = _qs.get('answer') ? { id: _qs.get('call'), video: _qs.get('answer') === 'video' } : null;
 window.hxAnswer = (id, video) => { if (call && call.id === id && call.dir === 'ring') accept(!!video); else autoAnswer = { id, video: !!video }; };
 window.hxHangup = () => { if (call) endCall(true); };
+// журнал нативных звонков: Android отдаёт его через мост, iPhone присылает списком
+window.hxNativeLog = (arr) => {
+  if (!me || !token) return false;
+  const add = (l) => { try { (Array.isArray(l) ? l : []).sort((a, b) => a.ts - b.ts).forEach((e) => e && e.peer && logCall(e)); } catch {} };
+  add(arr);
+  if (NATIVE && AND.takeCallLog) try { add(JSON.parse(AND.takeCallLog() || '[]')); } catch {}
+  if ($('callList')) renderCalls();
+  return true;
+};
 // iPhone: системный экран звонка (CallKit) — отклонить / VoIP-токен для звонков при закрытом приложении
 const isIOSApp = window.HeraxosPlatform === 'ios';
 let voipToken = null, serverVoip = false;
@@ -154,6 +166,7 @@ async function start() {
   }
   iceServers = await api('/api/ice').catch(() => []);
   connect(); await Promise.all([loadUsers(), loadChats()]); renderCalls(); setInterval(loadUsers, 30000);
+  if (NATIVE && AND.callLogReady) try { AND.callLogReady(); } catch {} // iPhone пришлёт журнал нативных звонков
   pushState();
   const q = _qs.get('chat');
   if (location.search) history.replaceState(null, '', '/');
@@ -741,6 +754,7 @@ async function subscribePush() {
 const callLog = () => JSON.parse(localStorage.getItem('hx_calls_' + me) || '[]');
 function logCall(e) { const l = callLog(); l.unshift(e); localStorage.setItem('hx_calls_' + me, JSON.stringify(l.slice(0, 200))); }
 function renderCalls() {
+  if (NATIVE && AND.takeCallLog) try { JSON.parse(AND.takeCallLog() || '[]').sort((a, b) => a.ts - b.ts).forEach((e) => e && e.peer && logCall(e)); } catch {}
   const L = $('callList'), l = callLog();
   L.innerHTML = l.length ? '' : '<div class="empty-list">Звонков пока нет</div>';
   l.forEach((c) => {
@@ -1019,7 +1033,13 @@ function pendingTile(login) {
 function dropPending(login) { const t = call && call.pending.get(K(login)); if (t) { t.remove(); call.pending.delete(K(login)); layout(); } }
 
 async function startCall(peer, video) {
-  D('call-start', peer + (video ? ' video' : ' audio'));
+  D('call-start', peer + (video ? ' video' : ' audio') + (NATIVE ? ' native' : ''));
+  if (NATIVE) {
+    try { if (AND.inCall && AND.inCall()) return AND.openCall(); } catch {}
+    await ensurePeer(peer);
+    try { AND.startCall(peer, dn(peer), !!video); } catch (e) { toast('Не удалось начать звонок'); }
+    return;
+  }
   if (call) return;
   newCall({ dir: 'out', title: peer, video0: video });
   pendingTile(peer);
@@ -1047,6 +1067,7 @@ function startTimer() {
 }
 
 async function onSignal(m) {
+  if (NATIVE) { if (m.type === 'error') toast(m.text, 3500); return; } // звонки ведёт приложение
   if (m.type !== 'ice') D('sig', m.type + (m.reason ? ' ' + m.reason : '') + (m.from ? ' от ' + m.from : ''));
   switch (m.type) {
     case 'invite': {
@@ -1280,6 +1301,7 @@ function ring(on) {
 const REPO = 'Arthuralend/Heraxos';
 const APK_URL = `https://github.com/${REPO}/releases/latest/download/Ahazang.apk`;
 const WHATS_NEW = [
+  'Звонки теперь работают как в WhatsApp: на заблокированном экране, с системным экраном звонка, громкой связью и Bluetooth (нужно обновить приложение)',
   'У каждого теперь есть номер — смотрите его в «Настройках». Войти можно по логину или по номеру',
   'Контакты как в телефоне: добавьте человека по номеру и сохраните под своим именем — подтверждение не нужно',
   'Написать и позвонить можно по любому номеру; ненужный контакт можно удалить или заблокировать',

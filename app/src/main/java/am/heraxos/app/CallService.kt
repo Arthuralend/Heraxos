@@ -77,6 +77,8 @@ class CallService : Service() {
         .build()
     private val main = Handler(Looper.getMainLooper())
     private var ws: WebSocket? = null
+    @Volatile private var wsOpen = false
+    private val queue = mutableListOf<String>()   // сигналы звонка, пока нет соединения
     private var backoff = 1000L
     private var stopped = false
     private var gen = 0
@@ -94,6 +96,7 @@ class CallService : Service() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        CallEngine.init(this)
         createChannels()
         applyForeground()
         if (callActive) holdLocks(true)
@@ -122,7 +125,7 @@ class CallService : Service() {
             .setWhen(callStarted)
             .setShowWhen(true)
             .setColor(0xFFC96442.toInt())
-            .setContentIntent(openApp(null, 11))
+            .setContentIntent(callScreen(11, false, false))
             .addAction(Notification.Action.Builder(null, "Завершить", hang).build())
             .build()
     }
@@ -172,6 +175,7 @@ class CallService : Service() {
 
     /** Кнопка «Завершить» в уведомлении о звонке */
     fun hangupFromNotification() {
+        if (CallEngine.busy) { CallEngine.hangup(); return }
         val id = callId
         if (MainActivity.hangupInPage()) return
         if (id != null) send(JSONObject().put("type", "hangup").put("id", id))
@@ -196,7 +200,7 @@ class CallService : Service() {
     }
 
     fun reconnectNow() {
-        ws?.close(1000, "relogin"); ws = null
+        ws?.close(1000, "relogin"); ws = null; wsOpen = false
         backoff = 1000L
         connect()
     }
@@ -208,7 +212,15 @@ class CallService : Service() {
             "/ws?bg=1&token=" + Uri.encode(token)
         val req = Request.Builder().url(url).header("User-Agent", "AhazangApp/1.0 (Android; service)").build()
         ws = client.newWebSocket(req, object : WebSocketListener() {
-            override fun onOpen(webSocket: WebSocket, response: Response) { backoff = 1000L }
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                backoff = 1000L
+                main.post {
+                    if (myGen != gen) return@post
+                    wsOpen = true
+                    for (q in queue) webSocket.send(q); queue.clear()
+                    CallEngine.onSignalingOpen()
+                }
+            }
             override fun onMessage(webSocket: WebSocket, text: String) {
                 val m = runCatching { JSONObject(text) }.getOrNull() ?: return
                 main.post { handle(m) }
@@ -224,22 +236,26 @@ class CallService : Service() {
 
     private fun retry(myGen: Int) {
         if (stopped || myGen != gen) return
-        ws = null
+        ws = null; wsOpen = false
         main.postDelayed({ if (!stopped && ws == null) connect() }, backoff)
         backoff = (backoff * 2).coerceAtMost(30_000L)
     }
 
-    fun send(json: JSONObject) { ws?.send(json.toString()) }
+    /** Отправить сигнал; если соединения сейчас нет — отправится сразу после переподключения */
+    fun send(json: JSONObject) {
+        val w = ws
+        if (w != null && wsOpen && w.send(json.toString())) return
+        if (queue.size < 200) queue += json.toString()
+        if (w == null && !stopped) { backoff = 1000L; connect() }
+    }
 
     private fun handle(m: JSONObject) {
         val type = m.optString("type")
         val id = m.optString("id")
         when (type) {
-            "invite" -> if (!MainActivity.visible) showIncoming(id, m.optString("from"), m.optString("fromName").ifEmpty { m.optString("from") }, m.optBoolean("video"))
-            "hangup", "reject" -> if (id == currentCall) {
-                val reason = m.optString("reason")
-                cancelIncoming(missed = reason != "elsewhere")
-            }
+            // звонки ведёт нативный модуль (CallEngine)
+            "invite", "calling", "error", "room", "ringing", "joined", "offer", "answer", "reneg", "ice",
+            "media", "quality", "declined", "noanswer", "left", "hangup" -> CallEngine.onSignal(m)
             "msg" -> {
                 val from = m.optString("f")
                 val title = m.optString("fn").ifEmpty { from }
@@ -260,16 +276,14 @@ class CallService : Service() {
         if (currentCall != id) showIncoming(id, from, title.ifEmpty { from }, video)
     }
 
-    private fun showIncoming(id: String, from: String, title: String, video: Boolean) {
+    fun showIncoming(id: String, from: String, title: String, video: Boolean) {
         if (id.isEmpty()) return
         currentCall = id; currentFrom = from; currentTitle = title; currentVideo = video
         wake()
 
-        val full = Intent(this, IncomingCallActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_USER_ACTION)
-            putExtra("id", id); putExtra("from", title); putExtra("video", video)
-        }
-        val fullPi = PendingIntent.getActivity(this, 20, full, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val fullPi = callScreen(20, false, false)
+        // приложение открыто — сразу показываем экран входящего звонка (рингтон даёт уведомление)
+        if (MainActivity.visible || CallActivity.visible) CallEngine.openScreen()
 
         val decline = PendingIntent.getBroadcast(this, 21,
             Intent(this, ActionReceiver::class.java).setAction(ActionReceiver.DECLINE).putExtra("id", id),
@@ -296,15 +310,20 @@ class CallService : Service() {
         nm.notify(NID_CALL, n)
     }
 
-    fun answerIntent(id: String, video: Boolean, code: Int): PendingIntent {
-        val i = Intent(this, MainActivity::class.java).apply {
+    @Suppress("UNUSED_PARAMETER")
+    fun answerIntent(id: String, video: Boolean, code: Int): PendingIntent = callScreen(code, true, video)
+
+    /** Экран звонка (поверх блокировки); answer — сразу ответить */
+    private fun callScreen(code: Int, answer: Boolean, video: Boolean): PendingIntent {
+        val i = Intent(this, CallActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            putExtra("answerCall", id); putExtra("video", video)
+            if (answer) { putExtra("answer", true); putExtra("video", video) }
         }
         return PendingIntent.getActivity(this, code, i, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
     }
 
     fun decline(id: String) {
+        if (CallEngine.id == id) { CallEngine.decline(); return }
         if (id == currentCall) {
             send(JSONObject().put("type", "reject").put("id", id))
             cancelIncoming(false)
@@ -317,7 +336,6 @@ class CallService : Service() {
         val wasRinging = currentCall != null
         currentCall = null; currentFrom = null; currentTitle = null
         nm.cancel(NID_CALL)
-        IncomingCallActivity.finishIfOpen()
         if (missed && wasRinging && from != null) {
             val n = Notification.Builder(this, CH_MSG)
                 .setSmallIcon(R.drawable.ic_notif)

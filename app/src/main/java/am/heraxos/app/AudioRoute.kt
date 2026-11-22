@@ -1,6 +1,5 @@
 package am.heraxos.app
 
-import android.app.Activity
 import android.content.Context
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
@@ -13,35 +12,46 @@ import android.os.PowerManager
  * Куда идёт звук звонка: «earpiece» — разговорный динамик (у уха, экран гаснет при поднесении),
  * «speaker» — громкая связь, «off» — звонок закончен. Если подключена гарнитура/Bluetooth — звук в неё.
  *
- * Встроенный браузерный движок (WebView) при старте разговора сам выбирает вывод звука и может
- * перебить наш выбор, поэтому выбор повторяется ещё несколько раз в первые секунды.
+ * При старте разговора звуковой модуль может перебить наш выбор, поэтому он повторяется
+ * ещё несколько раз в первые секунды.
  */
 object AudioRoute {
     private var prox: PowerManager.WakeLock? = null
     private val main = Handler(Looper.getMainLooper())
     @Volatile private var current = "off"
 
-    fun set(a: Activity, route: String) {
+    val route get() = current
+
+    fun set(ctx: Context, route: String) {
+        val a = ctx.applicationContext
         current = route
         main.removeCallbacksAndMessages(null)
         apply(a, route)
         if (route != "off") for (ms in longArrayOf(400, 1200, 3000, 6000)) {
-            main.postDelayed({ if (current == route && !a.isDestroyed) apply(a, route) }, ms)
+            main.postDelayed({ if (current == route) apply(a, route) }, ms)
         }
     }
 
-    private fun apply(a: Activity, route: String) {
+    /** Подключены наушники / Bluetooth-гарнитура */
+    fun headset(c: Context): Boolean {
+        val am = c.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        return am.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any {
+            it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
+                it.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES || it.type == AudioDeviceInfo.TYPE_USB_HEADSET ||
+                (Build.VERSION.SDK_INT >= 31 && it.type == AudioDeviceInfo.TYPE_BLE_HEADSET)
+        }
+    }
+
+    private fun apply(a: Context, route: String) {
         val am = a.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         if (route == "off") {
             if (Build.VERSION.SDK_INT >= 31) am.clearCommunicationDevice()
             @Suppress("DEPRECATION") run { am.isSpeakerphoneOn = false }
             am.mode = AudioManager.MODE_NORMAL
-            a.volumeControlStream = AudioManager.USE_DEFAULT_STREAM_TYPE
             proximity(a, false)
             return
         }
         if (am.mode != AudioManager.MODE_IN_COMMUNICATION) am.mode = AudioManager.MODE_IN_COMMUNICATION
-        a.volumeControlStream = AudioManager.STREAM_VOICE_CALL
         val speaker = route == "speaker"
         var headset = false
         if (Build.VERSION.SDK_INT >= 31) {

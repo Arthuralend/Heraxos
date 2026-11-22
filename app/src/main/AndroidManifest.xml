@@ -18,6 +18,9 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- Bluetooth-гарнитура в звонке (Android 12+) -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
     <!-- сохранение полученных файлов в «Загрузки» на Android 8–9 (на 10+ разрешение не нужно) -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
 
@@ -45,15 +48,17 @@
             </intent-filter>
         </activity>
 
+        <!-- экран звонка (нативный WebRTC): поверх блокировки, своя задача — звонок не мешает чатам -->
         <activity
-            android:name=".IncomingCallActivity"
+            android:name=".CallActivity"
             android:exported="false"
             android:theme="@style/Hx.Call"
-            android:launchMode="singleInstance"
+            android:launchMode="singleTask"
             android:screenOrientation="portrait"
             android:excludeFromRecents="true"
             android:showWhenLocked="true"
             android:turnScreenOn="true"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize|uiMode"
             android:taskAffinity="am.heraxos.app.call" />
 
         <service

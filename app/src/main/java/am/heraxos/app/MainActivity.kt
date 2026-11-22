@@ -44,6 +44,12 @@ class MainActivity : Activity() {
         private const val BG = 0xFFFAF9F5.toInt()
         private const val BG_DARK = 0xFF1A1918.toInt()
 
+        /** Нативный звонок закончился — вкладка «Звонки» забирает новую запись */
+        fun callLogChanged() {
+            val a = current ?: return
+            a.runOnUiThread { a.web.evaluateJavascript("window.hxNativeLog && hxNativeLog()", null) }
+        }
+
         /** Завершить звонок из уведомления: через веб-приложение, если оно открыто */
         fun hangupInPage(): Boolean {
             val a = current ?: return false
@@ -55,8 +61,13 @@ class MainActivity : Activity() {
     private lateinit var root: FrameLayout
     private lateinit var web: WebView
     private var pendingPermission: PermissionRequest? = null
+    private var pendingCall: Triple<String, String, Boolean>? = null
     private var fileCallback: ValueCallback<Array<Uri>>? = null
     private val serverHost: String by lazy { Uri.parse(BuildConfig.SERVER).host ?: "" }
+    private var callBar: android.widget.TextView? = null
+    private val barTick = object : Runnable {
+        override fun run() { updateCallBar(); root.postDelayed(this, 1000) }
+    }
     private var insetTop = 0
     private var insetBottom = 0
 
@@ -125,6 +136,7 @@ class MainActivity : Activity() {
         // Уведомления (Android 13+) и микрофон/камера заранее — чтобы ответ на звонок был мгновенным
         val ask = mutableListOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA)
         if (Build.VERSION.SDK_INT >= 33) ask += Manifest.permission.POST_NOTIFICATIONS
+        if (Build.VERSION.SDK_INT >= 31) ask += Manifest.permission.BLUETOOTH_CONNECT
         val missing = ask.filter { !has(it) }
         if (missing.isNotEmpty()) requestPermissions(missing.toTypedArray(), 1)
 
@@ -223,11 +235,40 @@ class MainActivity : Activity() {
         super.onResume()
         visible = true
         web.onResume()
+        root.removeCallbacks(barTick); root.post(barTick)
         CallService.instance?.clearMessageNotes()
         if (Prefs.token(this) != null) askSystemSettingsOnce()
     }
 
+    /** Идёт звонок, а вы в чатах — зелёная плашка сверху возвращает к экрану звонка */
+    private fun updateCallBar() {
+        val e = CallEngine
+        val show = e.busy && e.state != CallEngine.State.RINGING && !CallActivity.visible
+        if (!show) { callBar?.visibility = View.GONE; return }
+        val b = callBar ?: android.widget.TextView(this).apply {
+            setTextColor(Color.WHITE); textSize = 15f; typeface = android.graphics.Typeface.DEFAULT_BOLD
+            gravity = android.view.Gravity.CENTER
+            background = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = 18 * resources.displayMetrics.density; setColor(0xFF4F9A62.toInt())
+            }
+            val d = resources.displayMetrics.density
+            setPadding((18 * d).toInt(), 0, (18 * d).toInt(), 0)
+            elevation = 8 * d
+            setOnClickListener { CallEngine.openScreen() }
+            root.addView(this, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, (36 * d).toInt(),
+                android.view.Gravity.TOP or android.view.Gravity.CENTER_HORIZONTAL))
+            callBar = this
+        }
+        (b.layoutParams as FrameLayout.LayoutParams).topMargin = insetTop + (4 * resources.displayMetrics.density).toInt()
+        var t = "📞 Вернуться к звонку"
+        if (e.t0 > 0) { val s = ((System.currentTimeMillis() - e.t0) / 1000).toInt(); t += " · %d:%02d".format(s / 60, s % 60) }
+        b.text = t
+        b.visibility = View.VISIBLE
+        b.requestLayout()
+    }
+
     override fun onPause() {
+        root.removeCallbacks(barTick)
         visible = false
         super.onPause()
     }
@@ -257,6 +298,13 @@ class MainActivity : Activity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 4) {
+            val c = pendingCall ?: return
+            pendingCall = null
+            if (has(Manifest.permission.RECORD_AUDIO)) CallEngine.startCall(this, c.first, c.second, c.third && has(Manifest.permission.CAMERA))
+            else Toast.makeText(this, "Без доступа к микрофону звонить нельзя", Toast.LENGTH_LONG).show()
+            return
+        }
         if (requestCode == 2) {
             val req = pendingPermission ?: return
             pendingPermission = null
@@ -385,6 +433,30 @@ class MainActivity : Activity() {
         @JavascriptInterface
         fun appVersion(): Int = BuildConfig.VERSION_CODE
 
+        // ---- нативные звонки: интерфейс только начинает звонок, дальше всё ведёт CallEngine ----
+        @JavascriptInterface
+        fun nativeCalls(): Boolean = true
+
+        @JavascriptInterface
+        fun startCall(login: String, title: String, video: Boolean) {
+            runOnUiThread {
+                val need = mutableListOf<String>()
+                if (!has(Manifest.permission.RECORD_AUDIO)) need += Manifest.permission.RECORD_AUDIO
+                if (video && !has(Manifest.permission.CAMERA)) need += Manifest.permission.CAMERA
+                if (need.isNotEmpty()) { pendingCall = Triple(login, title, video); requestPermissions(need.toTypedArray(), 4); return@runOnUiThread }
+                CallEngine.startCall(this@MainActivity, login, title, video)
+            }
+        }
+
+        @JavascriptInterface
+        fun openCall() { runOnUiThread { if (CallEngine.busy) CallEngine.openScreen() } }
+
+        @JavascriptInterface
+        fun inCall(): Boolean = CallEngine.busy
+
+        @JavascriptInterface
+        fun takeCallLog(): String = CallEngine.takeCallLog(this@MainActivity)
+
         /** Сохранение файла частями: fileBegin → fileChunk (base64) … → fileEnd */
         @JavascriptInterface
         fun fileBegin(sid: String, name: String, mime: String): Boolean = runCatching { startSave(sid, name, mime) }.getOrDefault(false)
@@ -408,11 +480,12 @@ class MainActivity : Activity() {
     override fun onDestroy() {
         if (current === this) current = null
         // приложение закрыли во время звонка — сообщаем собеседнику сразу, а не через минуту
-        if (CallService.callActive) {
+        // (нативный звонок CallEngine при этом продолжается — он не зависит от окна)
+        if (CallService.callActive && !CallEngine.busy) {
             CallService.callId?.let { CallService.instance?.send(org.json.JSONObject().put("type", "hangup").put("id", it)) }
             CallService.setCall(applicationContext, false, false, "")
         }
-        AudioRoute.set(this, "off")
+        if (!CallEngine.busy) AudioRoute.set(this, "off")
         for (j in saves.values) runCatching { j.out.close() }
         saves.clear()
         (web.parent as? ViewGroup)?.removeView(web)
