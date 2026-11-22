@@ -25,9 +25,18 @@ jobs:
       - name: Ключ подписи
         env:
           KS: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          PW: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: |
-          if [ -z "$KS" ]; then echo "::error::Нет секрета ANDROID_KEYSTORE_B64 (ключ подписи Android) — см. README"; exit 1; fi
-          echo "$KS" | base64 -d > app/ahazang.jks
+          [ -n "$PW" ] || { echo "::error::Секрет ANDROID_KEYSTORE_PASSWORD пустой или не добавлен (Settings → Secrets and variables → Actions → Repository secrets)"; exit 1; }
+          [ -n "$KS" ] || { echo "::error::Секрет ANDROID_KEYSTORE_B64 пустой или не добавлен (Settings → Secrets and variables → Actions → Repository secrets)"; exit 1; }
+          # при вставке строка могла получить пробелы или переносы — убираем
+          printf '%s' "$KS" | tr -d ' \r\n\t' > ks.b64
+          echo "Длина ANDROID_KEYSTORE_B64: $(wc -c < ks.b64) символов (ожидается 5732)"
+          base64 -d ks.b64 > app/ahazang.jks 2>/dev/null || { echo "::error::ANDROID_KEYSTORE_B64 испорчен при копировании (не base64). Вставьте строку из файла ANDROID_KEYSTORE_B64.txt целиком"; exit 1; }
+          rm ks.b64
+          keytool -list -keystore app/ahazang.jks -storepass "$PW" -alias ahazang >/dev/null 2>&1 \
+            || { echo "::error::Ключ не открывается: неверный ANDROID_KEYSTORE_PASSWORD или ANDROID_KEYSTORE_B64 скопирован не полностью"; exit 1; }
+          echo "Ключ подписи в порядке"
       - name: Сборка
         env:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
