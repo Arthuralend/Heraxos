@@ -30,8 +30,18 @@ jobs:
           for v in TEAM KID ISS P8; do
             [ -n "${!v}" ] || { echo "::error::Нет секрета для $v (APPLE_TEAM_ID / ASC_KEY_ID / ASC_ISSUER_ID / ASC_KEY_P8)"; exit 1; }
           done
+          KID=$(printf '%s' "$KID" | tr -d ' \r\n\t'); echo "KEY_ID=$KID" >> "$GITHUB_ENV"
+          ISS=$(printf '%s' "$ISS" | tr -d ' \r\n\t'); echo "ISSUER_ID=$ISS" >> "$GITHUB_ENV"
+          TEAM=$(printf '%s' "$TEAM" | tr -d ' \r\n\t'); echo "TEAM_ID=$TEAM" >> "$GITHUB_ENV"
+          echo "Длины: Team ID ${#TEAM} (ожидается 10), Key ID ${#KID} (10), Issuer ID ${#ISS} (36)"
+          # Ключ .p8: восстанавливаем формат, даже если при вставке пропали переносы строк или строки BEGIN/END
+          BODY=$(printf '%s' "$P8" | tr -d '\r' | sed -e 's/-----BEGIN PRIVATE KEY-----//g' -e 's/-----END PRIVATE KEY-----//g' | tr -d ' \n\t')
+          echo "Длина тела ключа .p8: ${#BODY} символов (обычно около 200)"
+          if [ ${#BODY} -lt 150 ] || ! printf '%s' "$BODY" | base64 -D >/dev/null 2>&1; then
+            echo "::error::ASC_KEY_P8 не похож на содержимое файла AuthKey_….p8. Откройте файл в TextEdit, Cmd+A, Cmd+C и вставьте целиком"; exit 1
+          fi
           mkdir -p "$HOME/.appstoreconnect/private_keys"
-          printf '%s\n' "$P8" > "$HOME/.appstoreconnect/private_keys/AuthKey_$KID.p8"
+          { echo "-----BEGIN PRIVATE KEY-----"; printf '%s' "$BODY" | fold -w 64; echo; echo "-----END PRIVATE KEY-----"; } > "$HOME/.appstoreconnect/private_keys/AuthKey_$KID.p8"
           echo "KEYPATH=$HOME/.appstoreconnect/private_keys/AuthKey_$KID.p8" >> "$GITHUB_ENV"
           xcodebuild -version
 
@@ -44,10 +54,10 @@ jobs:
           cd ios
           xcodebuild archive -project Heraxos.xcodeproj -scheme Heraxos -configuration Release \
             -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/Ahazang.xcarchive" \
-            CODE_SIGNING_ALLOWED=YES CODE_SIGN_STYLE=Automatic DEVELOPMENT_TEAM="$TEAM" \
+            CODE_SIGNING_ALLOWED=YES CODE_SIGN_STYLE=Automatic DEVELOPMENT_TEAM="$TEAM_ID" \
             CURRENT_PROJECT_VERSION=${{ github.run_number }} \
             -allowProvisioningUpdates -authenticationKeyPath "$KEYPATH" \
-            -authenticationKeyID "$KID" -authenticationKeyIssuerID "$ISS" | tail -60
+            -authenticationKeyID "$KEY_ID" -authenticationKeyIssuerID "$ISSUER_ID" | tail -60
 
       - name: Загрузка в TestFlight
         run: |
@@ -58,7 +68,7 @@ jobs:
           <plist version="1.0"><dict>
             <key>method</key><string>app-store-connect</string>
             <key>destination</key><string>upload</string>
-            <key>teamID</key><string>$TEAM</string>
+            <key>teamID</key><string>$TEAM_ID</string>
             <key>signingStyle</key><string>automatic</string>
             <key>uploadSymbols</key><true/>
             <key>manageAppVersionAndBuildNumber</key><false/>
@@ -67,5 +77,5 @@ jobs:
           xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/Ahazang.xcarchive" \
             -exportOptionsPlist "$RUNNER_TEMP/export.plist" -exportPath "$RUNNER_TEMP/out" \
             -allowProvisioningUpdates -authenticationKeyPath "$KEYPATH" \
-            -authenticationKeyID "$KID" -authenticationKeyIssuerID "$ISS" | tail -40
+            -authenticationKeyID "$KEY_ID" -authenticationKeyIssuerID "$ISSUER_ID" | tail -40
           echo "Сборка ${{ github.run_number }} загружена. Через 5–15 минут она появится в App Store Connect → TestFlight."
