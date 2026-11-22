@@ -82,7 +82,8 @@ class CallService : Service() {
     private var gen = 0
 
     var currentCall: String? = null; private set
-    private var currentFrom: String? = null
+    private var currentFrom: String? = null      // логин (для открытия чата)
+    private var currentTitle: String? = null     // как показать: имя из контактов или номер
     private var currentVideo = false
     private val nm by lazy { getSystemService(NotificationManager::class.java) }
     private var cpuLock: PowerManager.WakeLock? = null
@@ -234,14 +235,15 @@ class CallService : Service() {
         val type = m.optString("type")
         val id = m.optString("id")
         when (type) {
-            "invite" -> if (!MainActivity.visible) showIncoming(id, m.optString("from"), m.optBoolean("video"))
+            "invite" -> if (!MainActivity.visible) showIncoming(id, m.optString("from"), m.optString("fromName").ifEmpty { m.optString("from") }, m.optBoolean("video"))
             "hangup", "reject" -> if (id == currentCall) {
                 val reason = m.optString("reason")
                 cancelIncoming(missed = reason != "elsewhere")
             }
             "msg" -> {
                 val from = m.optString("f")
-                if (!MainActivity.visible && !from.equals(Prefs.login(this), true)) notifyText(from, "🔒 Новое сообщение", from)
+                val title = m.optString("fn").ifEmpty { from }
+                if (!MainActivity.visible && !from.equals(Prefs.login(this), true)) notifyText(title, "🔒 Новое сообщение", from)
             }
             "contacts" -> {
                 val r = m.optString("request")
@@ -253,14 +255,14 @@ class CallService : Service() {
     }
 
     // ---------- входящий звонок ----------
-    private fun showIncoming(id: String, from: String, video: Boolean) {
+    private fun showIncoming(id: String, from: String, title: String, video: Boolean) {
         if (id.isEmpty()) return
-        currentCall = id; currentFrom = from; currentVideo = video
+        currentCall = id; currentFrom = from; currentTitle = title; currentVideo = video
         wake()
 
         val full = Intent(this, IncomingCallActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_USER_ACTION)
-            putExtra("id", id); putExtra("from", from); putExtra("video", video)
+            putExtra("id", id); putExtra("from", title); putExtra("video", video)
         }
         val fullPi = PendingIntent.getActivity(this, 20, full, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 
@@ -271,7 +273,7 @@ class CallService : Service() {
 
         val b = Notification.Builder(this, CH_CALL)
             .setSmallIcon(R.drawable.ic_notif)
-            .setContentTitle(from)
+            .setContentTitle(title)
             .setContentText(if (video) "Входящий видеозвонок Ahazang" else "Входящий звонок Ahazang")
             .setCategory(Notification.CATEGORY_CALL)
             .setOngoing(true)
@@ -306,15 +308,16 @@ class CallService : Service() {
 
     fun cancelIncoming(missed: Boolean) {
         val from = currentFrom
+        val title = currentTitle ?: from
         val wasRinging = currentCall != null
-        currentCall = null; currentFrom = null
+        currentCall = null; currentFrom = null; currentTitle = null
         nm.cancel(NID_CALL)
         IncomingCallActivity.finishIfOpen()
         if (missed && wasRinging && from != null) {
             val n = Notification.Builder(this, CH_MSG)
                 .setSmallIcon(R.drawable.ic_notif)
                 .setContentTitle("Пропущенный звонок")
-                .setContentText("от $from")
+                .setContentText("от $title")
                 .setAutoCancel(true)
                 .setColor(0xFFC96442.toInt())
                 .setContentIntent(openApp(from, 30))

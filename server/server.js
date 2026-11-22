@@ -45,7 +45,38 @@ const C = (u) => { u.contacts ||= []; u.requests ||= []; u.sent ||= []; return u
 const isContact = (a, b) => !!(db.users[a] && db.users[b] && C(db.users[a]).contacts.includes(b) && C(db.users[b]).contacts.includes(a));
 // блокировка: заблокированный не может писать, звонить, отправлять файлы и заявки (в обе стороны)
 const blocks = (a, b) => !!(db.users[a] && (db.users[a].blocked || []).includes(b));
-const canTalk = (a, b) => isContact(a, b) && !blocks(a, b) && !blocks(b, a);
+// Как в телефоне: написать и позвонить можно любому номеру, если никто из двоих не заблокировал другого
+const canTalk = (a, b) => !!(db.users[a] && db.users[b] && a !== b && !blocks(a, b) && !blocks(b, a));
+
+// ---------- номера ----------
+// Обычный номер — 6 цифр (случайный или выбранный самим, если свободен). «Красивые» номера
+// и номера короче 6 цифр выдаёт только администратор.
+const numIndex = new Map(); // номер -> ключ пользователя
+const fmtNum = (n) => (/^\d{6}$/.test(n) ? n.slice(0, 3) + ' ' + n.slice(3) : n || '');
+function isPretty(n) {
+  if (!/^\d{6}$/.test(n)) return true;
+  const d = [...n].map(Number), steps = d.slice(1).map((x, i) => x - d[i]);
+  return /^(\d)\1{5}$/.test(n) || /^(\d\d)\1\1$/.test(n) || /^(\d{3})\1$/.test(n) || /^(\d)\1\1(\d)\2\2$/.test(n) ||
+    /^(\d)\1{3}/.test(n) || /(\d)\1{3}$/.test(n) || /0000$/.test(n) || steps.every((x) => x === 1) || steps.every((x) => x === -1) ||
+    n === n.split('').reverse().join('');
+}
+function randomNum() {
+  for (;;) { const n = String(crypto.randomInt(100000, 1000000)); if (!numIndex.has(n) && !isPretty(n)) return n; }
+}
+function setNum(key, n) { const u = db.users[key]; if (u.num) numIndex.delete(u.num); u.num = n; numIndex.set(n, key); }
+const keyByNum = (n) => numIndex.get(String(n || '').replace(/\D/g, ''));
+// имя, под которым viewer сохранил пользователя key (или его номер)
+const dispFor = (viewer, key) => ((db.users[viewer] && db.users[viewer].book && db.users[viewer].book[key]) || fmtNum(db.users[key] && db.users[key].num) || name(key));
+// Перенос со старой схемы: всем выдаём номера, взаимные контакты → телефонная книга (имя = прежний логин)
+(function migrateNumbers() {
+  let changed = false;
+  for (const [k, u] of Object.entries(db.users)) if (u.num) numIndex.set(u.num, k);
+  for (const [k, u] of Object.entries(db.users)) {
+    if (!u.num) { setNum(k, randomNum()); changed = true; }
+    if (!u.book) { u.book = {}; for (const c of u.contacts || []) if (db.users[c]) u.book[c] = db.users[c].login; changed = true; }
+  }
+  if (changed) setTimeout(save, 0);
+})();
 const del = (arr, x) => { const i = arr.indexOf(x); if (i >= 0) arr.splice(i, 1); };
 
 // ---------- HTTP ----------
@@ -54,7 +85,7 @@ app.set('trust proxy', false);
 app.use(express.json({ limit: '256kb' }));
 app.use((req, res, next) => { res.set({ 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY' }); next(); });
 // Версия веб-приложения: устаревшие клиенты получают команду перезагрузиться
-const APP_VERSION = '9';
+const APP_VERSION = '10';
 // ---------- доступ: интерфейс и API только для приложений Ahazang ----------
 // Приложения (Android/iPhone) добавляют к User-Agent метку «AhazangApp/». Браузер вместо интерфейса получает
 // страницу «Скачайте приложение». Админка открыта в браузере (по паролю; можно ограничить IP через ADMIN_IPS).
@@ -90,25 +121,41 @@ function newToken(login) { const t = crypto.randomBytes(24).toString('hex'); db.
 
 app.post('/api/register', async (req, res) => {
   if (limited('r' + req.ip, 5)) return res.status(429).json({ error: 'Слишком много попыток, подождите минуту' });
-  const { login, password } = req.body || {};
+  const { login, password } = req.body || {}, want = String((req.body && req.body.num) || '').replace(/\D/g, '');
   if (!LOGIN_RE.test(login || '')) return res.status(400).json({ error: 'Логин: 3–24 символа (буквы, цифры, _ . -)' });
   if (!password || password.length < 6) return res.status(400).json({ error: 'Пароль не короче 6 символов' });
   const key = login.toLowerCase();
   if (db.users[key]) return res.status(409).json({ error: 'Логин занят' });
-  db.users[key] = { login, hash: await bcrypt.hash(password, 11), subs: [], created: Date.now() };
-  res.json({ token: newToken(key), login, keys: null });
+  if (want && !/^\d{6}$/.test(want)) return res.status(400).json({ error: 'Номер — ровно 6 цифр (или оставьте поле пустым)' });
+  if (want && numIndex.has(want)) return res.status(409).json({ error: 'Этот номер уже занят, выберите другой' });
+  if (want && isPretty(want)) return res.status(409).json({ error: 'Этот номер зарезервирован, выберите другой' });
+  db.users[key] = { login, hash: await bcrypt.hash(password, 11), subs: [], created: Date.now(), book: {} };
+  setNum(key, want || randomNum());
+  res.json({ token: newToken(key), login, num: db.users[key].num, keys: null });
 });
 
 app.post('/api/login', async (req, res) => {
   if (limited('l' + req.ip)) return res.status(429).json({ error: 'Слишком много попыток, подождите минуту' });
   const { login, password } = req.body || {};
-  const key = (login || '').toLowerCase(), u = db.users[key];
-  if (!u || !(await bcrypt.compare(password || '', u.hash))) return res.status(401).json({ error: 'Неверный логин или пароль' });
-  res.json({ token: newToken(key), login: u.login, keys: keysOf(u) });
+  // войти можно по логину или по номеру
+  let key = String(login || '').trim().toLowerCase();
+  if (!db.users[key] && /^[\d\s+-]+$/.test(key)) key = keyByNum(key) || key;
+  const u = db.users[key];
+  if (!u || !(await bcrypt.compare(password || '', u.hash))) return res.status(401).json({ error: 'Неверный логин, номер или пароль' });
+  res.json({ token: newToken(key), login: u.login, num: u.num, keys: keysOf(u) });
 });
 
 app.post('/api/logout', auth, (req, res) => { delete db.tokens[tokenOf(req)]; save(); res.json({ ok: true }); });
-app.get('/api/me', auth, (req, res) => res.json({ login: name(req.me), hasKeys: !!db.users[req.me].pub }));
+app.get('/api/me', auth, (req, res) => res.json({ login: name(req.me), num: db.users[req.me].num, hasKeys: !!db.users[req.me].pub }));
+// Сменить свой номер на свободный 6-значный
+app.post('/api/number', auth, (req, res) => {
+  if (limited('n' + req.me, 5)) return res.status(429).json({ error: 'Слишком много попыток, подождите минуту' });
+  const n = String((req.body && req.body.num) || '').replace(/\D/g, '');
+  if (!/^\d{6}$/.test(n)) return res.status(400).json({ error: 'Номер — ровно 6 цифр' });
+  if (numIndex.has(n) && numIndex.get(n) !== req.me) return res.status(409).json({ error: 'Этот номер уже занят' });
+  if (isPretty(n)) return res.status(409).json({ error: 'Этот номер зарезервирован, выберите другой' });
+  setNum(req.me, n); save(); res.json({ num: n });
+});
 
 // Ключи: публичный открыто, приватный — только зашифрованный паролем пользователя (сервер его не знает)
 app.post('/api/keys', auth, (req, res) => {
@@ -123,61 +170,49 @@ app.get('/api/key/:login', auth, contactOnly, (req, res) => {
   res.json({ pub: u.pub || null });
 });
 
-// ---------- контакты: только по взаимному согласию ----------
-const pub = (k) => ({ login: name(k), online: isOnline(k), lastSeen: db.users[k].lastSeen || 0 });
+// ---------- контакты: телефонная книга (без подтверждения второй стороны) ----------
+const book = (k) => (db.users[k].book ||= {});
+const peerInfo = (me, k) => ({ login: name(k), num: db.users[k].num, name: book(me)[k] || '', online: isOnline(k), lastSeen: db.users[k].lastSeen || 0 });
 app.get('/api/contacts', auth, (req, res) => {
-  const u = C(db.users[req.me]), ok = (k) => !!db.users[k];
+  const u = db.users[req.me];
   res.json({
-    contacts: u.contacts.filter(ok).map(pub).sort((x, y) => x.login.localeCompare(y.login)),
-    requests: u.requests.filter(ok).map(name),
-    sent: u.sent.filter(ok).map(name),
-    blocked: (u.blocked || []).filter(ok).map(name),
+    contacts: Object.keys(book(req.me)).filter((k) => db.users[k]).map((k) => peerInfo(req.me, k))
+      .sort((x, y) => (x.name || x.num).localeCompare(y.name || y.num)),
+    requests: [], sent: [],
+    blocked: (u.blocked || []).filter((k) => db.users[k]).map((k) => peerInfo(req.me, k)),
   });
 });
-function makeMutual(a, b) {
-  const A = C(db.users[a]), B = C(db.users[b]);
-  if (!A.contacts.includes(b)) A.contacts.push(b); if (!B.contacts.includes(a)) B.contacts.push(a);
-  del(A.requests, b); del(A.sent, b); del(B.requests, a); del(B.sent, a);
-}
+// найти человека по номеру (без подробностей — только логин для связи и номер)
+app.get('/api/lookup/:num', auth, (req, res) => {
+  if (limited('lk' + req.me, 30)) return res.status(429).json({ error: 'Слишком много запросов, подождите минуту' });
+  const k = keyByNum(req.params.num);
+  if (!k || k === req.me) return res.status(404).json({ error: 'Абонент с таким номером не найден' });
+  res.json(peerInfo(req.me, k));
+});
+app.get('/api/peer/:login', auth, (req, res) => {
+  const k = String(req.params.login || '').toLowerCase();
+  if (!db.users[k]) return res.status(404).json({ error: 'Нет пользователя' });
+  res.json({ ...peerInfo(req.me, k), blocked: blocks(req.me, k) });
+});
+const cleanName = (s) => String(s || '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, 40);
 app.post('/api/contacts/add', auth, (req, res) => {
-  if (limited('c' + req.me, 20)) return res.status(429).json({ error: 'Слишком много запросов, подождите минуту' });
-  const t = String((req.body && req.body.login) || '').trim().toLowerCase(), me = req.me;
-  if (!db.users[t] || t === me) return res.status(404).json({ error: 'Пользователь с таким логином не найден' });
-  const M = C(db.users[me]), T = C(db.users[t]);
-  if (isContact(me, t)) return res.json({ status: 'contact' });
-  if (M.requests.includes(t)) { makeMutual(me, t); save(); sendTo(t, { type: 'contacts' }); return res.json({ status: 'contact' }); }
-  if (blocks(t, me)) return res.json({ status: 'sent' }); // заблокировавший вас не получит заявку
-  if (!M.sent.includes(t)) M.sent.push(t);
-  if (!T.requests.includes(me)) {
-    T.requests.push(me);
-    sendTo(t, { type: 'contacts', request: name(me) });
-    pushTo(t, { title: 'Ahazang', body: name(me) + ' хочет добавить вас в контакты', from: name(me), kind: 'request' });
-  }
-  save(); res.json({ status: 'sent' });
+  if (limited('c' + req.me, 30)) return res.status(429).json({ error: 'Слишком много запросов, подождите минуту' });
+  const b = req.body || {}, k = b.num ? keyByNum(b.num) : String(b.login || '').toLowerCase();
+  if (!k || !db.users[k] || k === req.me) return res.status(404).json({ error: 'Абонент с таким номером не найден' });
+  book(req.me)[k] = cleanName(b.name); save();
+  res.json(peerInfo(req.me, k));
 });
-app.post('/api/contacts/accept', auth, (req, res) => {
-  const t = String(req.body.login || '').toLowerCase();
-  if (!C(db.users[req.me]).requests.includes(t) || !db.users[t]) return res.status(404).json({ error: 'Заявка не найдена' });
-  makeMutual(req.me, t); save(); sendTo(t, { type: 'contacts', accepted: name(req.me) }); res.json({ ok: true });
-});
-app.post('/api/contacts/decline', auth, (req, res) => {
-  const t = String(req.body.login || '').toLowerCase(), M = C(db.users[req.me]);
-  del(M.requests, t); if (db.users[t]) { del(C(db.users[t]).sent, req.me); sendTo(t, { type: 'contacts' }); }
-  save(); res.json({ ok: true });
-});
-app.post('/api/contacts/cancel', auth, (req, res) => {
-  const t = String(req.body.login || '').toLowerCase(), M = C(db.users[req.me]);
-  del(M.sent, t); if (db.users[t]) { del(C(db.users[t]).requests, req.me); sendTo(t, { type: 'contacts' }); }
-  save(); res.json({ ok: true });
+app.post('/api/contacts/rename', auth, (req, res) => {
+  const k = String((req.body && req.body.login) || '').toLowerCase();
+  if (!db.users[k]) return res.status(404).json({ error: 'Нет пользователя' });
+  book(req.me)[k] = cleanName(req.body.name); save(); res.json(peerInfo(req.me, k));
 });
 app.delete('/api/contacts/:login', auth, (req, res) => {
-  const t = req.params.login.toLowerCase();
-  del(C(db.users[req.me]).contacts, t); if (db.users[t]) { del(C(db.users[t]).contacts, req.me); sendTo(t, { type: 'contacts' }); }
-  save(); res.json({ ok: true });
+  delete book(req.me)[req.params.login.toLowerCase()]; save(); res.json({ ok: true });
 });
 function contactOnly(req, res, next) {
   const t = String(req.params.peer || req.params.login || '').toLowerCase();
-  if (!isContact(req.me, t)) return res.status(403).json({ error: 'Сначала добавьте пользователя в контакты' });
+  if (!db.users[t] || t === req.me) return res.status(404).json({ error: 'Нет пользователя' });
   req.peer = t; next();
 }
 
@@ -185,10 +220,10 @@ app.get('/api/chats', auth, (req, res) => {
   const out = [];
   for (const [pk, list] of Object.entries(db.msgs)) {
     const [a, b] = pk.split('|'); if (a !== req.me && b !== req.me) continue;
-    const peer = a === req.me ? b : a; if (!isContact(req.me, peer) || !list.length) continue;
+    const peer = a === req.me ? b : a; if (!db.users[peer] || !list.length) continue;
     const myRead = (db.reads[pk] || {})[req.me] || 0, peerRead = (db.reads[pk] || {})[peer] || 0;
     const last = list[list.length - 1];
-    out.push({ peer: name(peer), online: isOnline(peer), last: { ...last, f: name(last.f) }, peerRead,
+    out.push({ peer: name(peer), num: db.users[peer].num, name: book(req.me)[peer] || '', blocked: blocks(req.me, peer), online: isOnline(peer), last: { ...last, f: name(last.f) }, peerRead,
       unread: list.filter((m) => m.f === peer && m.ts > myRead).length });
   }
   res.json(out.sort((x, y) => y.last.ts - x.last.ts));
@@ -334,15 +369,26 @@ app.get('/api/admin/stats', admin, (req, res) => {
   const files = Object.values(db.files); res.json({ users: Object.keys(db.users).length, files: files.length, bytes: files.reduce((a, f) => a + f.s, 0) });
 });
 app.get('/api/admin/users', admin, (req, res) => {
-  res.json(Object.entries(db.users).map(([k, u]) => ({ login: u.login, created: u.created, lastSeen: u.lastSeen || 0, online: isOnline(k) }))
+  res.json(Object.entries(db.users).map(([k, u]) => ({ login: u.login, num: u.num, created: u.created, lastSeen: u.lastSeen || 0, online: isOnline(k) }))
     .sort((a, b) => a.login.localeCompare(b.login)));
 });
 app.post('/api/admin/users', admin, async (req, res) => {
-  const { login, password } = req.body || {};
+  // администратор может задать любой номер (в т.ч. «красивый» и короче 6 цифр) и пароль любой длины
+  const { login, password } = req.body || {}, n = String((req.body && req.body.num) || '').replace(/\D/g, '');
   if (!LOGIN_RE.test(login || '')) return res.status(400).json({ error: 'Логин: 3–24 символа (буквы, цифры, _ . -)' });
-  if (!password || password.length < 6) return res.status(400).json({ error: 'Пароль не короче 6 символов' });
+  if (!password) return res.status(400).json({ error: 'Укажите пароль' });
   const key = login.toLowerCase(); if (db.users[key]) return res.status(409).json({ error: 'Логин занят' });
-  db.users[key] = { login, hash: await bcrypt.hash(password, 11), subs: [], created: Date.now() }; save(); res.json({ ok: true });
+  if (n && n.length > 12) return res.status(400).json({ error: 'Номер — от 1 до 12 цифр' });
+  if (n && numIndex.has(n)) return res.status(409).json({ error: 'Номер занят пользователем ' + name(numIndex.get(n)) });
+  db.users[key] = { login, hash: await bcrypt.hash(password, 11), subs: [], created: Date.now(), book: {} };
+  setNum(key, n || randomNum()); save(); res.json({ ok: true, num: db.users[key].num });
+});
+app.post('/api/admin/number', admin, (req, res) => {
+  const key = String((req.body && req.body.login) || '').toLowerCase(), n = String((req.body && req.body.num) || '').replace(/\D/g, '');
+  if (!db.users[key]) return res.status(404).json({ error: 'Нет пользователя' });
+  if (!n || n.length > 12) return res.status(400).json({ error: 'Номер — от 1 до 12 цифр' });
+  if (numIndex.has(n) && numIndex.get(n) !== key) return res.status(409).json({ error: 'Номер занят пользователем ' + name(numIndex.get(n)) });
+  setNum(key, n); save(); res.json({ ok: true, num: n });
 });
 function dropSessions(key) {
   for (const [t, l] of Object.entries(db.tokens)) if (l === key) delete db.tokens[t];
@@ -351,7 +397,7 @@ function dropSessions(key) {
 app.post('/api/admin/reset', admin, async (req, res) => {
   const { login, password } = req.body || {}, key = (login || '').toLowerCase(), u = db.users[key];
   if (!u) return res.status(404).json({ error: 'Нет пользователя' });
-  if (!password || password.length < 6) return res.status(400).json({ error: 'Пароль не короче 6 символов' });
+  if (!password) return res.status(400).json({ error: 'Укажите пароль' });
   u.hash = await bcrypt.hash(password, 11);
   // Старый ключ зашифрован старым паролем — его невозможно восстановить. Создаётся новый при входе.
   delete u.pub; delete u.wrapped; delete u.salt; delete u.iv;
@@ -365,7 +411,8 @@ app.delete('/api/admin/users/:login', admin, (req, res) => {
 function deleteUser(key) {
   for (const [id, r] of rooms) if (r.members.has(key)) leaveRoom(id, key);
   dropSessions(key);
-  for (const U of Object.values(db.users)) { C(U); del(U.contacts, key); del(U.requests, key); del(U.sent, key); if (U.blocked) del(U.blocked, key); }
+  for (const U of Object.values(db.users)) { C(U); del(U.contacts, key); del(U.requests, key); del(U.sent, key); if (U.blocked) del(U.blocked, key); if (U.book) delete U.book[key]; }
+  if (db.users[key] && db.users[key].num) numIndex.delete(db.users[key].num);
   for (const k of Object.keys(db.users)) if (k !== key) sendTo(k, { type: 'contacts' });
   delete db.users[key];
   for (const [id, f] of Object.entries(db.files)) if (f.o === key || f.t === key) dropFile(id);
@@ -410,7 +457,7 @@ function startRinging(id, from, to, video) {
     if (!r || !r.invited.has(to)) return stopRinging(id, to, false);
     n++;
     pushTo(to, { kind: 'call', call: true, id, n, video, from: name(from),
-      title: (video ? '📹 Видеозвонок' : '📞 Звонок') + ' · Ahazang', body: name(from) + ' звонит вам…' });
+      title: (video ? '📹 Видеозвонок' : '📞 Звонок') + ' · Ahazang', body: dispFor(to, from) + ' звонит вам…' });
   };
   tick();
   ringing.set(key, { timer: setInterval(tick, 3500), from });
@@ -425,7 +472,7 @@ function inviteInto(id, r, from, to, video) {
   const inv = { from };
   r.invited.set(to, inv);
   pending.set(to, { id, from, video, ts: Date.now() });
-  sendTo(to, { type: 'invite', id, from: name(from), video, members: [...r.members].map(name) });
+  sendTo(to, { type: 'invite', id, from: name(from), fromName: dispFor(to, from), fromNum: db.users[from].num, video, members: [...r.members].map(name) });
   roomSend(r, { type: 'ringing', id, login: name(to) });
   startRinging(id, from, to, video);
   inv.timer = setTimeout(() => {
@@ -491,7 +538,7 @@ wss.on('connection', (ws, req) => {
   clearTimeout(leaveTimers.get(me)); leaveTimers.delete(me);
   const p = pending.get(me), pr = p && rooms.get(p.id);
   if (pr && pr.invited.has(me)) {
-    ws.send(JSON.stringify({ type: 'invite', id: p.id, from: name(p.from), video: p.video, members: [...pr.members].map(name) }));
+    ws.send(JSON.stringify({ type: 'invite', id: p.id, from: name(p.from), fromName: dispFor(me, p.from), fromNum: db.users[p.from] && db.users[p.from].num, video: p.video, members: [...pr.members].map(name) }));
     if (!ws.bg) stopRinging(p.id, me, false);
   }
 
@@ -508,15 +555,15 @@ wss.on('connection', (ws, req) => {
         (db.msgs[pk] ||= []).push(msg); if (db.msgs[pk].length > 5000) db.msgs[pk].splice(0, 1000); save();
         ws.send(JSON.stringify({ type: 'sent', cid: m.cid, id: msg.id, ts: msg.ts, to: name(to) }));
         for (const w of online.get(me) || []) if (w !== ws) w.send(JSON.stringify({ type: 'msg', ...msg, f: name(me), peer: name(to) }));
-        sendTo(to, { type: 'msg', ...msg, f: name(me), peer: name(me) });
-        pushTo(to, { title: name(me), body: '🔒 Новое сообщение', from: name(me), kind: 'msg' });
+        sendTo(to, { type: 'msg', ...msg, f: name(me), peer: name(me), fn: dispFor(to, me), fnum: db.users[me].num });
+        pushTo(to, { title: dispFor(to, me), body: '🔒 Новое сообщение', from: name(me), kind: 'msg' });
         break;
       }
       case 'typing': if (canTalk(me, to)) sendTo(to, { type: 'typing', from: name(me) }); break;
       case 'invite': {
         let id = m.id && String(m.id), r = id && rooms.get(id);
         if (id && (!r || !r.members.has(me))) return;
-        if (!canTalk(me, to)) return ws.send(JSON.stringify({ type: 'error', text: isContact(me, to) ? 'Абонент недоступен' : 'Звонить можно только контактам' }));
+        if (!canTalk(me, to)) return ws.send(JSON.stringify({ type: 'error', text: 'Абонент недоступен' }));
         if (r && (r.members.has(to) || r.invited.has(to))) return;
         if (r && r.members.size + r.invited.size >= MAX_CALL) return ws.send(JSON.stringify({ type: 'error', text: 'В звонке может быть не больше 5 человек' }));
         if (!r) {
@@ -581,7 +628,7 @@ wss.on('connection', (ws, req) => {
 });
 function broadcastPresence(login, on) {
   const msg = JSON.stringify({ type: 'presence', login: name(login), online: on, ts: Date.now() });
-  for (const k of C(db.users[login] || {}).contacts || []) for (const w of online.get(k) || []) w.readyState === 1 && w.send(msg);
+  for (const [k, u] of Object.entries(db.users)) if (u.book && u.book[login]) for (const w of online.get(k) || []) w.readyState === 1 && w.send(msg);
 }
 setInterval(() => wss.clients.forEach((ws) => { if (!ws.isAlive) return ws.terminate(); ws.isAlive = false; ws.ping(); }), 25000);
 

@@ -59,13 +59,14 @@ td:last-child{text-align:right;white-space:nowrap}
     </div>
     <div class="card">
       <h3>Добавить пользователя</h3>
-      <div class="f"><input id="nl" placeholder="Логин"><input id="np" placeholder="Пароль (от 6 символов)"><button class="p" id="bAdd">Добавить</button></div>
+      <div class="f"><input id="nl" placeholder="Логин"><input id="np" placeholder="Пароль (любой длины)"><input id="nn" placeholder="Номер (необязательно)" inputmode="numeric" style="width:170px"><button class="p" id="bAdd">Добавить</button></div>
+      <p class="mute" style="margin:8px 0 0">Номер можно не указывать — выдастся случайный 6-значный. Администратор может выдать любой номер от 1 до 12 цифр, включая «красивые» (777777, 123456) и короткие (7, 100, 2024).</p>
       <div class="err" id="aerr"></div>
     </div>
     <div class="card">
       <h3>Пользователи <span class="mute" id="cnt"></span></h3>
       <input id="q" placeholder="Поиск" style="width:100%;margin-bottom:8px">
-      <table><thead><tr><th>Логин</th><th>Создан</th><th>Последний вход</th><th></th></tr></thead><tbody id="tb"></tbody></table>
+      <table><thead><tr><th>Логин</th><th>Номер</th><th>Создан</th><th>Последний вход</th><th></th></tr></thead><tbody id="tb"></tbody></table>
     </div>
   </main>
 </div>
@@ -110,21 +111,25 @@ $('reps').onclick = async (e) => {
   }
 };
 function render() {
-  const q = $('q').value.toLowerCase(), list = all.filter((u) => u.login.toLowerCase().includes(q));
+  const q = $('q').value.toLowerCase(), list = all.filter((u) => u.login.toLowerCase().includes(q) || String(u.num || '').includes(q.replace(/\D/g, '') || '¤'));
   $('cnt').textContent = '(' + all.length + ')';
-  $('tb').innerHTML = list.map((u) => `<tr><td>${u.online ? '<span class="dot"></span>' : ''}<b>${esc(u.login)}</b></td><td class="mute">${fmt(u.created)}</td><td class="mute">${u.online ? 'в сети' : fmt(u.lastSeen)}</td>
-    <td><button class="s" data-r="${esc(u.login)}">Сбросить пароль</button> <button class="s d" data-d="${esc(u.login)}">Удалить</button></td></tr>`).join('') || '<tr><td colspan="4" class="mute">Нет пользователей</td></tr>';
+  $('tb').innerHTML = list.map((u) => `<tr><td>${u.online ? '<span class="dot"></span>' : ''}<b>${esc(u.login)}</b></td><td><b style="font-variant-numeric:tabular-nums">${esc(u.num || '—')}</b></td><td class="mute">${fmt(u.created)}</td><td class="mute">${u.online ? 'в сети' : fmt(u.lastSeen)}</td>
+    <td><button class="s" data-n="${esc(u.login)}">Номер</button> <button class="s" data-r="${esc(u.login)}">Сбросить пароль</button> <button class="s d" data-d="${esc(u.login)}">Удалить</button></td></tr>`).join('') || '<tr><td colspan="5" class="mute">Нет пользователей</td></tr>';
 }
 $('q').oninput = render;
 $('bAdd').onclick = async () => {
   $('aerr').textContent = '';
-  try { await api('/api/admin/users', { login: $('nl').value.trim(), password: $('np').value }); $('nl').value = $('np').value = ''; load(); }
+  try { const r = await api('/api/admin/users', { login: $('nl').value.trim(), password: $('np').value, num: $('nn').value.trim() }); $('nl').value = $('np').value = $('nn').value = ''; $('aerr').style.color = '#2e7d32'; $('aerr').textContent = 'Создан, номер: ' + r.num; setTimeout(() => { $('aerr').textContent = ''; $('aerr').style.color = ''; }, 6000); load(); }
   catch (e) { $('aerr').textContent = e.message; }
 };
 $('tb').onclick = async (e) => {
-  const r = e.target.dataset.r, d = e.target.dataset.d;
+  const r = e.target.dataset.r, d = e.target.dataset.d, n = e.target.dataset.n;
+  if (n) {
+    const v = prompt(`Новый номер для «${n}» (от 1 до 12 цифр, можно «красивый» или короткий):`);
+    if (v) try { const x = await api('/api/admin/number', { login: n, num: v }); alert('Номер изменён: ' + x.num); load(); } catch (e2) { alert(e2.message); }
+  }
   if (r) {
-    const p = prompt(`Новый пароль для «${r}» (от 6 символов).\n\nВнимание: старая переписка этого пользователя станет нечитаемой для него, потому что ключ шифрования был защищён старым паролем.`);
+    const p = prompt(`Новый пароль для «${r}» (любой длины).\n\nВнимание: старая переписка этого пользователя станет нечитаемой для него, потому что ключ шифрования был защищён старым паролем.`);
     if (p) try { await api('/api/admin/reset', { login: r, password: p }); alert('Пароль изменён. Все сеансы пользователя завершены.'); load(); } catch (e) { alert(e.message); }
   }
   if (d && confirm(`Удалить пользователя «${d}» и все его чаты? Это необратимо.`)) {

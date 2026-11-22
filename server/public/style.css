@@ -327,3 +327,10 @@ html.is-android .androidOnly{display:flex!important}
 .doc ul{padding-left:20px}
 .blk-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)}
 .blk-row b{flex:1}
+
+/* номера */
+.mynum{font-size:15px;color:var(--brand);font-weight:600;letter-spacing:.5px;margin-top:2px;font-variant-numeric:tabular-nums}
+.addbar{flex-wrap:wrap}
+.addbar #addNum{flex:0 0 120px}
+.row .sub .num{color:var(--mute);font-variant-numeric:tabular-nums}
+.modal-box input[type=text],.modal-box input[inputmode]{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);margin-top:8px;font-size:15px;outline:none}

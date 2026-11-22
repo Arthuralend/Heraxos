@@ -1,5 +1,5 @@
 // Ahazang — клиент
-const APP_VERSION = '9';
+const APP_VERSION = '10';
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 let token = localStorage.getItem('hx_token'), me = localStorage.getItem('hx_me');
@@ -17,12 +17,30 @@ window.hxAnswer = (id, video) => { if (call && call.id === id && call.dir === 'r
 window.hxHangup = () => { if (call) endCall(true); };
 window.hxBack = () => { if ($('viewer').classList.contains('on')) { closeViewer(); return true; } if ($('info').classList.contains('on')) { $('info').classList.remove('on'); return true; } if (call) return true; if ($('qMenu').classList.contains('on')) { $('qMenu').classList.remove('on'); return true; } if (cur && !matchMedia('(min-width:800px)').matches) { closeChat(); return true; } return false; };
 
+// ---------- номера и имена ----------
+// Внутри приложения человек определяется логином; на экране — имя из вашей телефонной книги или номер.
+const people = new Map(); // логин (строчными) -> { login, num, name }
+const fmtNum = (n) => (/^\d{6}$/.test(n || '') ? n.slice(0, 3) + ' ' + n.slice(3) : n || '');
+function remember(p) { if (p && p.login) { const k = p.login.toLowerCase(); people.set(k, Object.assign(people.get(k) || {}, p)); } }
+function dn(login) {
+  if (!login) return '';
+  const p = people.get(String(login).toLowerCase());
+  return p ? p.name || fmtNum(p.num) || p.login : String(login);
+}
+const numOf = (login) => { const p = people.get(String(login).toLowerCase()); return p && p.num ? fmtNum(p.num) : ''; };
+const inBook = (login) => users.some((u) => u.login.toLowerCase() === String(login).toLowerCase());
+async function ensurePeer(login) {
+  const k = String(login).toLowerCase(); if (people.has(k) && people.get(k).num) return people.get(k);
+  try { const p = await api('/api/peer/' + encodeURIComponent(k)); remember(p); return p; } catch { return null; }
+}
+
 // ---------- утилиты ----------
 const COLORS = ['#c96442', '#b5835a', '#8b6f47', '#6a8a82', '#7e8fb8', '#a26b8f', '#5e8c61', '#b8875a', '#8c7aa9', '#c17c74', '#6f8fa6', '#9a7b4f'];
 function avatar(el, login, isOnline) {
   let h = 0; for (const c of login) h = (h * 31 + c.charCodeAt(0)) | 0;
   el.style.background = COLORS[Math.abs(h) % COLORS.length];
-  el.innerHTML = esc(login[0].toUpperCase()) + (isOnline ? '<i></i>' : '');
+  const label = dn(login) || '?';
+  el.innerHTML = esc((/^[\d+ ]/.test(label) ? '#' : label[0]).toUpperCase()) + (isOnline ? '<i></i>' : '');
 }
 const avaHTML = (login, on, cls = '') => { const d = document.createElement('div'); d.className = 'ava ' + cls; avatar(d, login, on); return d.outerHTML; };
 const pad = (n) => String(n).padStart(2, '0');
@@ -62,6 +80,8 @@ async function api(url, body, method) {
 async function doAuth(kind) {
   const reg = kind === 'register';
   const login = (reg ? $('rLogin') : $('login')).value.trim(), password = (reg ? $('rPass') : $('pass')).value;
+  const num = reg ? $('rNum').value.replace(/\D/g, '') : '';
+  if (reg && num && num.length !== 6) return ($('aerr').textContent = 'Номер — ровно 6 цифр, или оставьте поле пустым');
   $('aerr').textContent = '';
   if (!login || !password) return ($('aerr').textContent = 'Введите логин и пароль');
   if (reg && password !== $('rPass2').value) return ($('aerr').textContent = 'Пароли не совпадают');
@@ -69,7 +89,9 @@ async function doAuth(kind) {
   const btn = reg ? $('bReg') : $('bLogin'); btn.disabled = true;
   $('aerr').textContent = reg ? 'Создаём ключи шифрования…' : 'Вход…';
   try {
-    const j = await api('/api/' + kind, { login, password });
+    const j = await api('/api/' + kind, reg ? { login, password, num } : { login, password });
+    if (j.num) localStorage.setItem('hx_num', j.num);
+    if (reg && j.num) setTimeout(() => toast('Ваш номер: ' + fmtNum(j.num), 5000), 800);
     token = j.token; me = j.login;
     let local;
     if (j.keys) local = await HX.unwrap(j.keys, password);
@@ -109,7 +131,8 @@ async function start() {
   await HX.load(local);
   if (AND) try { AND.setSession(token, me); } catch {}
   $('auth').classList.remove('on'); $('app').classList.add('on');
-  $('meName').textContent = me; avatar($('meAva'), me);
+  $('meName').textContent = me; avatar($('meAva'), me); showMyNum(localStorage.getItem('hx_num'));
+  api('/api/me').then((j) => { if (j.num) { localStorage.setItem('hx_num', j.num); showMyNum(j.num); } }).catch(() => {});
   // с версии 6 по умолчанию 1080p (снижается автоматически только при слабом интернете)
   if (localStorage.getItem('hx_q_v') !== '2') { localStorage.setItem('hx_q', 'hd'); localStorage.setItem('hx_q_v', '2'); }
   $('defQuality').value = localStorage.getItem('hx_q') || 'hd';
@@ -207,10 +230,7 @@ async function onWS(m) {
       if (m.online) online.add(m.login.toLowerCase()); else { online.delete(m.login.toLowerCase()); lastSeen.set(m.login.toLowerCase(), m.ts); }
       updateHeadStatus(); renderChats(); renderUsers(); return;
     case 'contacts':
-      if (m.request) toast(m.request + ' хочет добавить вас в контакты', 4000);
-      if (m.accepted) toast(m.accepted + ' принял(а) вашу заявку', 4000);
       loadUsers(); loadChats();
-      if (cur && !users.some((u) => u.login.toLowerCase() === cur.peer.toLowerCase())) setTimeout(() => cur && !users.some((u) => u.login.toLowerCase() === cur.peer.toLowerCase()) && closeChat(), 800);
       return;
     default: return onSignal(m);
   }
@@ -221,8 +241,9 @@ let requests = [], sentReq = [], blocked = new Set();
 async function loadUsers() {
   try {
     const j = await api('/api/contacts');
-    users = j.contacts; requests = j.requests; sentReq = j.sent;
-    blocked = new Set((j.blocked || []).map((x) => x.toLowerCase())); updateBlockUI();
+    users = j.contacts; requests = []; sentReq = [];
+    users.forEach(remember); (j.blocked || []).forEach(remember);
+    blocked = new Set((j.blocked || []).map((x) => (x.login || x).toLowerCase())); updateBlockUI();
     users.forEach((u) => { const k = u.login.toLowerCase(); u.online ? online.add(k) : online.delete(k); if (u.lastSeen) lastSeen.set(k, u.lastSeen); });
     const rb = $('reqBadge'); rb.textContent = requests.length; rb.style.display = requests.length ? 'block' : 'none';
     renderUsers(); renderChats();
@@ -230,57 +251,77 @@ async function loadUsers() {
 }
 function contactRow(login, actions) {
   const k = login.toLowerCase(), d = document.createElement('div'); d.className = 'row';
-  d.innerHTML = `${avaHTML(login, online.has(k))}<div class="body"><div class="top"><b>${esc(login)}</b></div><div class="sub"><span></span></div></div><div class="act">${actions}</div>`;
+  d.innerHTML = `${avaHTML(login, online.has(k))}<div class="body"><div class="top"><b>${esc(dn(login))}</b></div><div class="sub"><span></span></div></div><div class="act">${actions}</div>`;
   return d;
 }
 function renderUsers() {
-  const L = $('userList'); L.innerHTML = '';
-  if (requests.length) {
-    L.insertAdjacentHTML('beforeend', `<div class="section">Заявки в контакты · ${requests.length}</div>`);
-    requests.forEach((r) => {
-      const d = contactRow(r, '<button class="pill ok" data-a="acc">Принять</button><button class="pill" data-a="dec">✕</button>');
-      d.querySelector('.sub span').textContent = 'хочет добавить вас';
-      d.onclick = async (e) => {
-        const a = e.target.closest('[data-a]'); if (!a) return;
-        await api('/api/contacts/' + (a.dataset.a === 'acc' ? 'accept' : 'decline'), { login: r }).catch((x) => toast(x.message));
-        if (a.dataset.a === 'acc') toast(r + ' теперь в ваших контактах'); loadUsers(); loadChats();
-      };
-      L.appendChild(d);
-    });
-  }
-  if (sentReq.length) {
-    L.insertAdjacentHTML('beforeend', `<div class="section">Ожидают подтверждения</div>`);
-    sentReq.forEach((r) => {
-      const d = contactRow(r, '<button class="pill" data-a="cancel">Отменить</button>');
-      d.querySelector('.sub span').textContent = 'заявка отправлена';
-      d.onclick = async (e) => { if (!e.target.closest('[data-a]')) return; await api('/api/contacts/cancel', { login: r }).catch(() => {}); loadUsers(); };
-      L.appendChild(d);
-    });
-  }
+  const L = $('userList'); L.innerHTML = ''; $('reqBadge').style.display = 'none';
   L.insertAdjacentHTML('beforeend', `<div class="section">Мои контакты${users.length ? ' · ' + users.length : ''}</div>`);
-  if (!users.length) L.insertAdjacentHTML('beforeend', '<div class="empty-list">Контактов пока нет.<br>Введите точный логин человека выше и нажмите «Добавить». Когда он примет заявку, вы сможете переписываться и звонить.</div>');
+  if (!users.length) L.insertAdjacentHTML('beforeend', '<div class="empty-list">Контактов пока нет.<br>Введите номер человека выше, при желании — имя, и нажмите «Добавить». Подтверждение с его стороны не нужно.</div>');
   users.forEach((u) => {
     const k = u.login.toLowerCase();
-    const d = contactRow(u.login, '<button class="iconbtn" data-a="v"><svg><use href="#i-video"/></svg></button><button class="iconbtn" data-a="a"><svg><use href="#i-phone"/></svg></button><button class="iconbtn dim" data-a="x" title="Удалить из контактов">⋯</button>');
-    const st = d.querySelector('.sub span'); st.textContent = fmtSeen(k); if (online.has(k)) st.className = 'on';
-    d.onclick = async (e) => {
+    const d = contactRow(u.login, '<button class="iconbtn" data-a="v"><svg><use href="#i-video"/></svg></button><button class="iconbtn" data-a="a"><svg><use href="#i-phone"/></svg></button><button class="iconbtn dim" data-a="x" title="Ещё"><svg><use href="#i-more"/></svg></button>');
+    const st = d.querySelector('.sub span');
+    st.innerHTML = `${u.name ? `<span class="num">${esc(fmtNum(u.num))}</span> · ` : ''}${isBlocked(k) ? 'заблокирован(а)' : esc(fmtSeen(k))}`;
+    if (online.has(k) && !isBlocked(k)) st.className = 'on';
+    d.onclick = (e) => {
       const a = e.target.closest('[data-a]'); if (!a) return openChat(u.login);
       e.stopPropagation();
-      if (a.dataset.a === 'x') { if (confirm(`Удалить ${u.login} из контактов? Переписка и звонки станут недоступны, пока вы снова не добавите друг друга.`)) { await api('/api/contacts/' + encodeURIComponent(k), null, 'DELETE').catch(() => {}); if (cur && cur.peer.toLowerCase() === k) closeChat(); loadUsers(); loadChats(); } return; }
+      if (a.dataset.a === 'x') return contactMenu(u.login);
       startCall(u.login, a.dataset.a === 'v');
     };
     L.appendChild(d);
   });
 }
+// меню контакта: имя, удаление, блокировка
+function contactMenu(login) {
+  const saved = inBook(login), b = isBlocked(login);
+  infoSheet(dn(login), numOf(login) && dn(login) !== numOf(login) ? `<p class="mute">Номер: ${esc(numOf(login))}</p>` : '', [
+    { label: saved ? 'Изменить имя' : 'Сохранить в контакты', primary: true, on: () => askName(login) },
+    saved ? { label: 'Удалить из контактов', on: () => removeContact(login) } : null,
+    b ? { label: 'Разблокировать', on: () => setBlocked(login, false) } : { label: 'Заблокировать', danger: true, on: () => askBlock(login) },
+    { label: 'Закрыть' },
+  ].filter(Boolean));
+}
+function askName(login) {
+  const cur0 = (users.find((u) => u.login.toLowerCase() === login.toLowerCase()) || {}).name || '';
+  infoSheet(inBook(login) ? 'Изменить имя' : 'Сохранить контакт', `<p class="mute">Номер: ${esc(numOf(login))}</p><input type="text" id="nmIn" maxlength="40" placeholder="Имя" value="${esc(cur0)}">`,
+    [{ label: 'Сохранить', primary: true, on: async () => {
+      const name = $('nmIn').value.trim();
+      try {
+        const r = await api(inBook(login) ? '/api/contacts/rename' : '/api/contacts/add', { login, name });
+        remember(r); toast('Сохранено', 1500); await loadUsers(); loadChats(); if (cur) { $('cPeer').textContent = dn(cur.peer); updateHeadStatus(); }
+      } catch (x) { toast(x.message); }
+    } }, { label: 'Отмена' }]);
+  setTimeout(() => $('nmIn') && $('nmIn').focus(), 100);
+}
+async function removeContact(login) {
+  if (!confirm(`Удалить «${dn(login)}» из контактов? Переписка сохранится, написать и позвонить по номеру можно будет как и раньше.`)) return;
+  await api('/api/contacts/' + encodeURIComponent(login.toLowerCase()), null, 'DELETE').catch(() => {});
+  const p = people.get(login.toLowerCase()); if (p) p.name = '';
+  await loadUsers(); loadChats(); if (cur) { $('cPeer').textContent = dn(cur.peer); updateHeadStatus(); }
+}
 $('fAdd').onsubmit = async (e) => {
   e.preventDefault();
-  const login = $('addLogin').value.trim(); if (!login) return;
+  const num = $('addNum').value.replace(/\D/g, ''), name = $('addName').value.trim(); if (!num) return toast('Введите номер');
   try {
-    const r = await api('/api/contacts/add', { login });
-    $('addLogin').value = '';
-    toast(r.status === 'contact' ? login + ' добавлен в контакты' : 'Заявка отправлена. ' + login + ' появится в контактах после подтверждения', 3500);
-    loadUsers(); loadChats();
+    const r = await api('/api/contacts/add', { num, name });
+    remember(r); $('addNum').value = $('addName').value = '';
+    toast(`${dn(r.login)} добавлен(а) в контакты`, 2500);
+    await loadUsers(); loadChats();
   } catch (x) { toast(x.message); }
+};
+
+// ---------- мой номер ----------
+function showMyNum(n) { $('meNum').textContent = n ? '№ ' + fmtNum(n) : ''; $('myNumState').textContent = n ? fmtNum(n) + ' — нажмите, чтобы сменить' : '—'; }
+$('bMyNum').onclick = () => {
+  const n = localStorage.getItem('hx_num') || '';
+  infoSheet('Мой номер', `<p class="mute">Сейчас: <b>${esc(fmtNum(n))}</b>. Можно выбрать любой свободный 6-значный номер. Старый номер освободится, и по нему вас больше не найдут.</p><input type="text" id="newNum" inputmode="numeric" maxlength="7" placeholder="Новый номер — 6 цифр">`,
+    [{ label: 'Сменить номер', primary: true, on: async () => {
+      const v = $('newNum').value.replace(/\D/g, '');
+      try { const r = await api('/api/number', { num: v }); localStorage.setItem('hx_num', r.num); showMyNum(r.num); toast('Ваш новый номер: ' + fmtNum(r.num), 3500); }
+      catch (x) { toast(x.message, 3500); }
+    } }, { label: 'Отмена' }]);
 };
 
 // ---------- ключи собеседников ----------
@@ -302,7 +343,7 @@ let lcTimer; const loadChatsSoon = () => { clearTimeout(lcTimer); lcTimer = setT
 async function loadChats() {
   try {
     chats = await api('/api/chats');
-    for (const c of chats) { c.preview = await decryptMsg(c.peer, c.last); const k = c.peer.toLowerCase(); c.online ? online.add(k) : online.delete(k); }
+    for (const c of chats) { remember({ login: c.peer, num: c.num, name: c.name }); c.preview = await decryptMsg(c.peer, c.last); const k = c.peer.toLowerCase(); c.online ? online.add(k) : online.delete(k); }
     renderChats();
   } catch {}
 }
@@ -314,31 +355,32 @@ function renderChats() {
     b.innerHTML = isIOS && !standalone ? '📲 Добавьте Ahazang на экран «Домой» (Поделиться → На экран «Домой»), чтобы получать звонки и сообщения' : '🔔 Нажмите, чтобы включить уведомления о звонках и сообщениях';
     b.onclick = enablePush; L.appendChild(b);
   }
-  const list = chats.filter((c) => c.peer.toLowerCase().includes(q));
+  const match = (l) => dn(l).toLowerCase().includes(q) || (numOf(l) || '').replace(' ', '').includes(q.replace(/\s/g, ''));
+  const list = chats.filter((c) => match(c.peer));
   list.forEach((c) => {
     total += c.unread;
     const mine = c.last.f.toLowerCase() === me.toLowerCase();
     const tick = mine ? (c.last.ts <= c.peerRead ? TICK2 : TICK1) + ' ' : '';
     const prev = c.preview === null ? '🔒 Сообщение недоступно' : previewOf(c.preview);
     const d = document.createElement('div'); d.className = 'row' + (cur && cur.peer === c.peer ? ' sel' : '');
-    d.innerHTML = `${avaHTML(c.peer, online.has(c.peer.toLowerCase()))}<div class="body"><div class="top"><b>${esc(c.peer)}</b><time class="${c.unread ? 'unr' : ''}">${fmtList(c.last.ts)}</time></div>
+    d.innerHTML = `${avaHTML(c.peer, online.has(c.peer.toLowerCase()))}<div class="body"><div class="top"><b>${esc(dn(c.peer))}</b><time class="${c.unread ? 'unr' : ''}">${fmtList(c.last.ts)}</time></div>
       <div class="sub"><span>${tick}${esc(prev)}</span>${c.unread ? `<b class="badge">${c.unread}</b>` : ''}</div></div>`;
     d.onclick = () => openChat(c.peer); L.appendChild(d);
   });
   const withChat = new Set(chats.map((c) => c.peer.toLowerCase()));
-  const rest = users.filter((u) => !withChat.has(u.login.toLowerCase()) && u.login.toLowerCase().includes(q))
-    .sort((a, b) => online.has(b.login.toLowerCase()) - online.has(a.login.toLowerCase()) || a.login.localeCompare(b.login));
+  const rest = users.filter((u) => !withChat.has(u.login.toLowerCase()) && match(u.login))
+    .sort((a, b) => online.has(b.login.toLowerCase()) - online.has(a.login.toLowerCase()) || dn(a.login).localeCompare(dn(b.login)));
   if (rest.length) {
     L.insertAdjacentHTML('beforeend', `<div class="section">Контакты · ${rest.length}</div>`);
     rest.forEach((u) => {
       const k = u.login.toLowerCase(), d = document.createElement('div'); d.className = 'row';
-      d.innerHTML = `${avaHTML(u.login, online.has(k))}<div class="body"><div class="top"><b>${esc(u.login)}</b></div><div class="sub"><span class="${online.has(k) ? 'on' : ''}">${esc(fmtSeen(k))}</span></div></div>
+      d.innerHTML = `${avaHTML(u.login, online.has(k))}<div class="body"><div class="top"><b>${esc(dn(u.login))}</b></div><div class="sub"><span class="${online.has(k) ? 'on' : ''}">${esc(fmtSeen(k))}</span></div></div>
         <div class="act"><button class="iconbtn" data-a="v"><svg><use href="#i-video"/></svg></button><button class="iconbtn" data-a="a"><svg><use href="#i-phone"/></svg></button></div>`;
       d.onclick = (e) => { const a = e.target.closest('[data-a]'); if (a) { e.stopPropagation(); return startCall(u.login, a.dataset.a === 'v'); } openChat(u.login); };
       L.appendChild(d);
     });
   }
-  if (!list.length && !rest.length) L.insertAdjacentHTML('beforeend', `<div class="empty-list">${q ? 'Никого не найдено' : 'Здесь появятся ваши контакты.<br>Добавьте человека по логину во вкладке «Контакты».'}</div>`);
+  if (!list.length && !rest.length) L.insertAdjacentHTML('beforeend', `<div class="empty-list">${q ? 'Никого не найдено' : 'Здесь появятся ваши чаты.<br>Добавьте человека по номеру во вкладке «Контакты».'}</div>`);
   const ub = $('unreadBadge'); ub.textContent = total; ub.style.display = total ? 'block' : 'none';
   if (navigator.setAppBadge) total ? navigator.setAppBadge(total).catch(() => {}) : navigator.clearAppBadge().catch(() => {});
 }
@@ -346,13 +388,12 @@ $('qChats').oninput = renderChats;
 
 // ---------- переписка ----------
 async function openChat(peer) {
-  const u = users.find((x) => x.login.toLowerCase() === peer.toLowerCase());
-  if (!u) { await loadUsers(); if (!users.some((x) => x.login.toLowerCase() === peer.toLowerCase())) return toast('Этот пользователь не в ваших контактах'); return openChat(peer); }
-  peer = u.login;
+  const p = await ensurePeer(peer); if (!p) return toast('Абонент не найден');
+  peer = p.login;
   cur = { peer, msgs: [], peerRead: 0, pub: null };
   document.querySelector('#tabbar button[data-tab=chats]').click();
   $('chat').classList.add('has'); $('app').classList.add('in-chat');
-  $('cPeer').textContent = peer; avatar($('cAva'), peer); updateHeadStatus();
+  $('cPeer').textContent = dn(peer); avatar($('cAva'), peer); updateHeadStatus();
   $('msgs').innerHTML = ''; renderChats(); updateBlockUI();
   try {
     cur.pub = await peerKey(peer, true);
@@ -370,7 +411,10 @@ window.addEventListener('popstate', () => cur && closeChat());
 $('bAudio').onclick = () => cur && startCall(cur.peer, false);
 $('bVideo').onclick = () => cur && startCall(cur.peer, true);
 
-function updateHeadStatus() { if (cur) $('cStatus').textContent = fmtSeen(cur.peer.toLowerCase()); }
+function updateHeadStatus() {
+  if (!cur) return; const n = numOf(cur.peer), shown = dn(cur.peer);
+  $('cStatus').textContent = (n && n !== shown ? n + ' · ' : '') + fmtSeen(cur.peer.toLowerCase());
+}
 
 function renderMsgs(scroll) {
   const box = $('msgs'), atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
@@ -441,22 +485,22 @@ function updateBlockUI() {
 async function setBlocked(login, on) {
   try {
     await api(on ? '/api/block' : '/api/unblock', { login });
-    toast(on ? `${login} заблокирован(а): не сможет писать и звонить вам` : `${login} разблокирован(а)`, 3000);
+    toast(on ? `${dn(login)} заблокирован(а): не сможет писать и звонить вам` : `${dn(login)} разблокирован(а)`, 3000);
     if (on && call && [...call.peers.keys(), ...call.pending.keys()].includes(K(login))) endCall(true);
     await loadUsers(); updateBlockUI();
   } catch (e) { toast(e.message); }
 }
 function askBlock(login) {
-  infoSheet(`Заблокировать ${login}?`, `<p class="mute">${esc(login)} не сможет писать вам, звонить, отправлять файлы и заявки. Об этом ему не сообщается. Разблокировать можно в любой момент.</p>`,
+  infoSheet(`Заблокировать ${dn(login)}?`, `<p class="mute">${esc(dn(login))} не сможет писать вам, звонить, отправлять файлы и заявки. Об этом ему не сообщается. Разблокировать можно в любой момент.</p>`,
     [{ label: 'Заблокировать', danger: true, on: () => setBlocked(login, true) }, { label: 'Отмена' }]);
 }
 const REASONS = ['Спам или реклама', 'Оскорбления, угрозы или травля', 'Недопустимые материалы', 'Мошенничество', 'Другое'];
 function askReport(login) {
   const own = cur && K(cur.peer) === K(login);
-  infoSheet(`Пожаловаться на ${login}`,
+  infoSheet(`Пожаловаться на ${dn(login)}`,
     `<div class="opts">${REASONS.map((r, i) => `<label><input type="radio" name="rr" value="${esc(r)}" ${i ? '' : 'checked'}> ${esc(r)}</label>`).join('')}</div>
      <textarea id="rNote" rows="2" maxlength="1000" placeholder="Комментарий (необязательно)"></textarea>
-     ${own ? `<label class="terms"><input type="checkbox" id="rAttach" checked> <span>Приложить последние сообщения от ${esc(login)}. Они расшифровываются на вашем телефоне и передаются только администратору.</span></label>` : ''}`,
+     ${own ? `<label class="terms"><input type="checkbox" id="rAttach" checked> <span>Приложить последние сообщения от ${esc(dn(login))}. Они расшифровываются на вашем телефоне и передаются только администратору.</span></label>` : ''}`,
     [{ label: 'Отправить жалобу', danger: true, on: () => sendReport(login) }, { label: 'Отмена' }]);
 }
 async function sendReport(login) {
@@ -470,23 +514,24 @@ async function sendReport(login) {
   try {
     await api('/api/report', { login, reason, note, messages });
     if (isBlocked(login)) return toast('Жалоба отправлена администратору', 3000);
-    infoSheet('Жалоба отправлена', `<p class="mute">Администратор рассмотрит её. Заблокировать ${esc(login)}, чтобы он(а) больше не мог(ла) с вами связаться?</p>`,
+    infoSheet('Жалоба отправлена', `<p class="mute">Администратор рассмотрит её. Заблокировать ${esc(dn(login))}, чтобы он(а) больше не мог(ла) с вами связаться?</p>`,
       [{ label: 'Заблокировать', danger: true, on: () => setBlocked(login, true) }, { label: 'Не сейчас' }]);
   } catch (e) { toast(e.message); }
 }
 $('bMore').onclick = () => {
-  if (!cur) return; const peer = cur.peer, b = isBlocked(peer);
-  infoSheet(peer, '', [
+  if (!cur) return; const peer = cur.peer, b = isBlocked(peer), saved = inBook(peer);
+  infoSheet(dn(peer), numOf(peer) && numOf(peer) !== dn(peer) ? `<p class="mute">Номер: ${esc(numOf(peer))}</p>` : '', [
+    { label: saved ? 'Изменить имя' : 'Сохранить в контакты', primary: true, on: () => askName(peer) },
+    saved ? { label: 'Удалить из контактов', on: () => removeContact(peer) } : null,
     { label: 'Пожаловаться', on: () => askReport(peer) },
     b ? { label: 'Разблокировать', primary: true, on: () => setBlocked(peer, false) } : { label: 'Заблокировать', danger: true, on: () => askBlock(peer) },
     { label: 'Закрыть' },
-  ]);
+  ].filter(Boolean));
 };
 $('bUnblock').onclick = () => cur && setBlocked(cur.peer, false);
 $('bBlocked').onclick = () => {
   if (!blocked.size) return toast('Вы никого не блокировали');
-  const names = [...blocked].map((k) => (users.find((u) => K(u.login) === k) || { login: k }).login);
-  infoSheet('Заблокированные', names.map((n) => `<div class="blk-row"><b>${esc(n)}</b><button class="pill" data-unblock="${esc(n)}">Разблокировать</button></div>`).join(''), [{ label: 'Готово' }]);
+  infoSheet('Заблокированные', [...blocked].map((k) => `<div class="blk-row"><b>${esc(dn(k))}</b><span class="mute">${esc(numOf(k))}</span><button class="pill" data-unblock="${esc(k)}">Разблокировать</button></div>`).join(''), [{ label: 'Готово' }]);
 };
 $('infoBody').addEventListener('click', (e) => {
   const u = e.target.closest('[data-unblock]'); if (!u) return;
@@ -687,7 +732,7 @@ function renderCalls() {
     const dur = c.dur ? ` · ${Math.floor(c.dur / 60)}:${pad(c.dur % 60)}` : '';
     const label = ({ out: 'Исходящий', in: 'Входящий', missed: 'Пропущенный' }[c.dir] || 'Звонок') + (c.group ? ' групповой' : '') + (c.video ? ' видеозвонок' : ' звонок');
     const d = document.createElement('div'); d.className = 'row';
-    d.innerHTML = `${avaHTML(c.peer)}<div class="body"><div class="top"><b class="${missed ? 'miss' : ''}">${esc(c.peer)}</b><time>${fmtList(c.ts)}</time></div>
+    d.innerHTML = `${avaHTML(c.peer)}<div class="body"><div class="top"><b class="${missed ? 'miss' : ''}">${esc(String(c.peer).split(', ').map(dn).join(', '))}</b><time>${fmtList(c.ts)}</time></div>
       <div class="sub"><span><svg class="ic12 ${missed ? 'miss' : ''}" style="width:14px;height:14px"><use href="#${icon}"/></svg> ${label}${dur}</span></div></div>
       <div class="act"><button class="iconbtn"><svg><use href="#${c.video ? 'i-video' : 'i-phone'}"/></svg></button></div>`;
     d.onclick = () => { if (c.group) return toast('Групповой звонок: позвоните одному и добавьте остальных кнопкой «+»'); startCall(c.peer, c.video); }; L.appendChild(d);
@@ -762,8 +807,10 @@ $('bSpeaker').onclick = () => { if (!call) return; call.routeManual = true; setR
 const K = (l) => String(l).toLowerCase();
 function peerTile(login) {
   const t = document.createElement('div'); t.className = 'tile'; t.dataset.p = K(login);
-  t.innerHTML = `<video autoplay playsinline muted></video><div class="tav"></div><div class="tname">${esc(login)}</div><audio autoplay></audio>`;
+  t.innerHTML = `<video autoplay playsinline muted></video><div class="tav"></div><div class="tname">${esc(dn(login))}</div><audio autoplay></audio>`;
   avatar(t.querySelector('.tav'), login);
+  // незнакомый участник группового звонка: подтягиваем его номер
+  if (!people.has(K(login))) ensurePeer(login).then(() => { t.querySelector('.tname').textContent = dn(login); avatar(t.querySelector('.tav'), login); if (call && call.peers.size + call.pending.size <= 1) layout(); });
   $('grid').appendChild(t); return t;
 }
 function getPeer(login) { return call && call.peers.get(K(login)); }
@@ -804,7 +851,7 @@ function scheduleRestart(p, delay) {
     p.rt = null;
     if (!call || getPeer(p.login) !== p || p.pc.connectionState === 'connected') return;
     if (Date.now() - p.lost > RECOVER_MS) {
-      toast(`Связь с ${p.login} потеряна`, 3500); closePeer(p.login);
+      toast(`Связь с ${dn(p.login)} потеряна`, 3500); closePeer(p.login);
       if (!call.peers.size && !call.pending.size) endCall(true);
       return;
     }
@@ -904,7 +951,7 @@ function layout() {
   if (!call.videoMode) showControls(false); else if (!call.uiTimer && !c.classList.contains('hide-ui')) scheduleHideUI();
   if (n <= 1) {
     const who = peers[0] ? peers[0].login : [...call.pending.values()][0]?.dataset.name || call.title;
-    $('callName').textContent = who; avatar($('callAva'), who);
+    $('callName').textContent = dn(who); avatar($('callAva'), who);
   }
 }
 
@@ -987,8 +1034,9 @@ async function onSignal(m) {
       if (call) { if (call.id !== m.id) send({ type: 'reject', id: m.id, reason: 'busy' }); return; }
       const others = (m.members || []).filter((x) => K(x) !== K(m.from));
       newCall({ id: m.id, dir: 'ring', title: m.from, offerVideo: m.video });
-      $('callName').textContent = m.from; avatar($('callAva'), m.from);
-      $('callState').textContent = others.length ? `Групповой звонок · ещё ${others.join(', ')}` : (m.video ? 'Видеозвонок Ahazang…' : 'Аудиозвонок Ahazang…');
+      remember({ login: m.from, num: m.fromNum });
+      $('callName').textContent = dn(m.from); avatar($('callAva'), m.from);
+      $('callState').textContent = others.length ? `Групповой звонок · ещё ${others.map(dn).join(', ')}` : (m.video ? 'Видеозвонок Ahazang…' : 'Аудиозвонок Ahazang…');
       $('wrapAcceptV').style.display = m.video ? '' : 'none';
       showCallScreen('incoming'); layout();
       if (autoAnswer && autoAnswer.id === m.id) { const v = autoAnswer.video; autoAnswer = null; accept(v && m.video); }
@@ -1017,9 +1065,9 @@ async function onSignal(m) {
       break;
     }
     case 'quality': setQuality(m.q, m.from); break;
-    case 'declined': dropPending(m.login); toast(m.reason === 'busy' ? `${m.login}: занято` : `${m.login} отклонил(а) звонок`); break;
-    case 'noanswer': dropPending(m.login); toast(`${m.login} не отвечает`); break;
-    case 'left': closePeer(m.login); dropPending(m.login); if (call.peers.size) toast(`${m.login} вышел(а) из звонка`); break;
+    case 'declined': dropPending(m.login); toast(m.reason === 'busy' ? `${dn(m.login)}: занято` : `${dn(m.login)} отклонил(а) звонок`); break;
+    case 'noanswer': dropPending(m.login); toast(`${dn(m.login)} не отвечает`); break;
+    case 'left': closePeer(m.login); dropPending(m.login); if (call.peers.size) toast(`${dn(m.login)} вышел(а) из звонка`); break;
     case 'hangup': {
       const r = m.reason;
       if (call.dir === 'ring' && r !== 'elsewhere') call.dir = 'missed';
@@ -1135,8 +1183,8 @@ $('bAdd').onclick = async () => {
   else if (!free.length) L.innerHTML = '<div class="empty-list">Все ваши контакты уже в звонке</div>';
   else free.forEach((u) => {
     const k = K(u.login), d = document.createElement('div'); d.className = 'row';
-    d.innerHTML = `${avaHTML(u.login, online.has(k))}<div class="body"><div class="top"><b>${esc(u.login)}</b></div><div class="sub"><span class="${online.has(k) ? 'on' : ''}">${esc(fmtSeen(k))}</span></div></div><div class="act"><button class="pill ok">Позвать</button></div>`;
-    d.onclick = () => { send({ type: 'invite', id: call.id, to: u.login, video: localVideoOn() }); $('addSheet').classList.remove('on'); toast('Вызываем ' + u.login + '…'); };
+    d.innerHTML = `${avaHTML(u.login, online.has(k))}<div class="body"><div class="top"><b>${esc(dn(u.login))}</b></div><div class="sub"><span class="${online.has(k) ? 'on' : ''}">${esc(fmtSeen(k))}</span></div></div><div class="act"><button class="pill ok">Позвать</button></div>`;
+    d.onclick = () => { send({ type: 'invite', id: call.id, to: u.login, video: localVideoOn() }); $('addSheet').classList.remove('on'); toast('Вызываем ' + dn(u.login) + '…'); };
     L.appendChild(d);
   });
   $('addSheet').classList.add('on');
@@ -1201,12 +1249,11 @@ function ring(on) {
 const REPO = 'Arthuralend/Heraxos';
 const APK_URL = `https://github.com/${REPO}/releases/latest/download/Ahazang.apk`;
 const WHATS_NEW = [
-  'Блокировка: в чате «⋮» → «Заблокировать» — человек больше не сможет писать и звонить',
-  'Жалобы: «⋮» → «Пожаловаться» — администратор рассмотрит в течение суток',
-  'Удаление аккаунта: «Настройки» → «Удалить аккаунт»',
-  'Политика конфиденциальности, условия использования и поддержка — в «Настройках»',
-  'Отправка файлов, фото и видео со сквозным шифрованием (до 100 МБ)',
-  'Во время видеозвонка нажмите на экран — кнопки спрячутся, нажмите ещё раз — появятся',
+  'У каждого теперь есть номер — смотрите его в «Настройках». Войти можно по логину или по номеру',
+  'Контакты как в телефоне: добавьте человека по номеру и сохраните под своим именем — подтверждение не нужно',
+  'Написать и позвонить можно по любому номеру; ненужный контакт можно удалить или заблокировать',
+  'Свой 6-значный номер можно выбрать самому, если он свободен: «Настройки» → «Мой номер»',
+  'Ваши прежние контакты перенесены и сохранены под их логинами — имена можно поменять',
 ];
 const androidVersion = () => { try { return AND && AND.appVersion ? +AND.appVersion() || 0 : 0; } catch { return 0; } };
 function infoSheet(title, html, actions) {
