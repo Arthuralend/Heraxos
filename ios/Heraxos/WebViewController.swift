@@ -68,6 +68,12 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
     // Внешние ссылки — в Safari
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        // почта и телефон — в системные приложения
+        if let u = navigationAction.request.url, let scheme = u.scheme?.lowercased(), ["mailto", "tel"].contains(scheme) {
+            UIApplication.shared.open(u)
+            decisionHandler(.cancel)
+            return
+        }
         if let u = navigationAction.request.url, let scheme = u.scheme, ["http", "https"].contains(scheme), u.host != SERVER.host {
             UIApplication.shared.open(u)
             decisionHandler(.cancel)

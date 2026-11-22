@@ -33,6 +33,12 @@ td:last-child{text-align:right;white-space:nowrap}
 #login input{width:100%;margin:14px 0 8px}
 #login button{width:100%}
 #panel{display:none}
+.rep{border:1px solid var(--line);border-radius:10px;padding:12px;margin:10px 0}
+.rep.closed{opacity:.55}
+.rep .h{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.rep .h b{flex:1}
+.rep .m{background:#f5f4ed;border-radius:8px;padding:6px 10px;margin:4px 0;font-size:13.5px;white-space:pre-wrap;word-break:break-word}
+.badge{background:var(--brand);color:#fff;border-radius:9px;padding:1px 8px;font-size:12px;font-weight:600}
 </style>
 </head>
 <body>
@@ -46,6 +52,11 @@ td:last-child{text-align:right;white-space:nowrap}
   <header><img src="/logo.png" alt=""><b>Ahazang · Администрирование</b><button id="bOut">Выйти</button></header>
   <main>
     <div class="note">🔒 Администратор управляет только аккаунтами. Переписка хранится на сервере в зашифрованном виде, ключи есть только у собеседников, поэтому прочитать её отсюда невозможно. Звонки не записываются.</div>
+    <div class="card">
+      <h3>Жалобы <span class="badge" id="repNew" style="display:none"></span></h3>
+      <p class="mute">Рассматривайте жалобы в течение 24 часов: это требование App Store. Текст сообщений присылает сам пожаловавшийся (сервер переписку прочитать не может). Нарушителя можно удалить кнопкой ниже.</p>
+      <div id="reps"></div>
+    </div>
     <div class="card">
       <h3>Добавить пользователя</h3>
       <div class="f"><input id="nl" placeholder="Логин"><input id="np" placeholder="Пароль (от 6 символов)"><button class="p" id="bAdd">Добавить</button></div>
@@ -78,7 +89,26 @@ $('bIn').onclick = async () => {
 };
 $('ap').onkeydown = (e) => e.key === 'Enter' && $('bIn').click();
 $('bOut').onclick = out;
-async function load() { all = await api('/api/admin/users'); render(); }
+async function load() { all = await api('/api/admin/users'); render(); loadReports(); }
+async function loadReports() {
+  const list = await api('/api/admin/reports').catch(() => []);
+  const fresh = list.filter((r) => r.status === 'new').length;
+  $('repNew').textContent = fresh + ' новых'; $('repNew').style.display = fresh ? '' : 'none';
+  $('reps').innerHTML = list.length ? list.slice(0, 100).map((r) => `<div class="rep ${r.status === 'closed' ? 'closed' : ''}">
+    <div class="h"><b>${esc(r.from)} → ${esc(r.about)}</b><span class="mute">${fmt(r.ts)}</span>
+      ${r.status === 'new' ? `<button class="s" data-close="${r.id}">Рассмотрено</button>` : '<span class="mute">рассмотрено</span>'}
+      <button class="s d" data-d="${esc(r.about)}">Удалить ${esc(r.about)}</button></div>
+    <div><b>Причина:</b> ${esc(r.reason || '—')}</div>${r.note ? `<div><b>Комментарий:</b> ${esc(r.note)}</div>` : ''}
+    ${(r.messages || []).map((m) => `<div class="m"><span class="mute">${fmt(m.ts)}</span> ${esc(m.text)}</div>`).join('')}
+  </div>`).join('') : '<p class="mute">Жалоб нет</p>';
+}
+$('reps').onclick = async (e) => {
+  const c = e.target.dataset.close, d = e.target.dataset.d;
+  if (c) { await api('/api/admin/reports/' + c + '/close', {}).catch((x) => alert(x.message)); loadReports(); }
+  if (d && confirm(`Удалить пользователя «${d}» и все его чаты? Это необратимо.`)) {
+    try { await api('/api/admin/users/' + encodeURIComponent(d), null, 'DELETE'); load(); } catch (x) { alert(x.message); }
+  }
+};
 function render() {
   const q = $('q').value.toLowerCase(), list = all.filter((u) => u.login.toLowerCase().includes(q));
   $('cnt').textContent = '(' + all.length + ')';

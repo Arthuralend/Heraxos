@@ -1,5 +1,5 @@
 // Ahazang — клиент
-const APP_VERSION = '8';
+const APP_VERSION = '9';
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 let token = localStorage.getItem('hx_token'), me = localStorage.getItem('hx_me');
@@ -65,6 +65,7 @@ async function doAuth(kind) {
   $('aerr').textContent = '';
   if (!login || !password) return ($('aerr').textContent = 'Введите логин и пароль');
   if (reg && password !== $('rPass2').value) return ($('aerr').textContent = 'Пароли не совпадают');
+  if (reg && !$('rTerms').checked) return ($('aerr').textContent = 'Примите условия использования и политику конфиденциальности');
   const btn = reg ? $('bReg') : $('bLogin'); btn.disabled = true;
   $('aerr').textContent = reg ? 'Создаём ключи шифрования…' : 'Вход…';
   try {
@@ -216,11 +217,12 @@ async function onWS(m) {
 }
 
 // ---------- контакты (по взаимному согласию) ----------
-let requests = [], sentReq = [];
+let requests = [], sentReq = [], blocked = new Set();
 async function loadUsers() {
   try {
     const j = await api('/api/contacts');
     users = j.contacts; requests = j.requests; sentReq = j.sent;
+    blocked = new Set((j.blocked || []).map((x) => x.toLowerCase())); updateBlockUI();
     users.forEach((u) => { const k = u.login.toLowerCase(); u.online ? online.add(k) : online.delete(k); if (u.lastSeen) lastSeen.set(k, u.lastSeen); });
     const rb = $('reqBadge'); rb.textContent = requests.length; rb.style.display = requests.length ? 'block' : 'none';
     renderUsers(); renderChats();
@@ -351,7 +353,7 @@ async function openChat(peer) {
   document.querySelector('#tabbar button[data-tab=chats]').click();
   $('chat').classList.add('has'); $('app').classList.add('in-chat');
   $('cPeer').textContent = peer; avatar($('cAva'), peer); updateHeadStatus();
-  $('msgs').innerHTML = ''; renderChats();
+  $('msgs').innerHTML = ''; renderChats(); updateBlockUI();
   try {
     cur.pub = await peerKey(peer, true);
     const j = await api('/api/messages/' + encodeURIComponent(peer.toLowerCase()));
@@ -427,6 +429,94 @@ async function onMessage(m) {
   loadChatsSoon();
 }
 $('bSend').onclick = sendMsg;
+
+// ---------- блокировка и жалобы ----------
+const isBlocked = (l) => blocked.has(K(l));
+function updateBlockUI() {
+  const b = !!(cur && isBlocked(cur.peer));
+  $('blockBar').hidden = !b; $('composer').hidden = b;
+  $('bAudio').style.visibility = $('bVideo').style.visibility = b ? 'hidden' : '';
+  $('blockedState').textContent = blocked.size ? `${blocked.size} — нажмите, чтобы разблокировать` : 'Никого';
+}
+async function setBlocked(login, on) {
+  try {
+    await api(on ? '/api/block' : '/api/unblock', { login });
+    toast(on ? `${login} заблокирован(а): не сможет писать и звонить вам` : `${login} разблокирован(а)`, 3000);
+    if (on && call && [...call.peers.keys(), ...call.pending.keys()].includes(K(login))) endCall(true);
+    await loadUsers(); updateBlockUI();
+  } catch (e) { toast(e.message); }
+}
+function askBlock(login) {
+  infoSheet(`Заблокировать ${login}?`, `<p class="mute">${esc(login)} не сможет писать вам, звонить, отправлять файлы и заявки. Об этом ему не сообщается. Разблокировать можно в любой момент.</p>`,
+    [{ label: 'Заблокировать', danger: true, on: () => setBlocked(login, true) }, { label: 'Отмена' }]);
+}
+const REASONS = ['Спам или реклама', 'Оскорбления, угрозы или травля', 'Недопустимые материалы', 'Мошенничество', 'Другое'];
+function askReport(login) {
+  const own = cur && K(cur.peer) === K(login);
+  infoSheet(`Пожаловаться на ${login}`,
+    `<div class="opts">${REASONS.map((r, i) => `<label><input type="radio" name="rr" value="${esc(r)}" ${i ? '' : 'checked'}> ${esc(r)}</label>`).join('')}</div>
+     <textarea id="rNote" rows="2" maxlength="1000" placeholder="Комментарий (необязательно)"></textarea>
+     ${own ? `<label class="terms"><input type="checkbox" id="rAttach" checked> <span>Приложить последние сообщения от ${esc(login)}. Они расшифровываются на вашем телефоне и передаются только администратору.</span></label>` : ''}`,
+    [{ label: 'Отправить жалобу', danger: true, on: () => sendReport(login) }, { label: 'Отмена' }]);
+}
+async function sendReport(login) {
+  const reason = (document.querySelector('input[name=rr]:checked') || {}).value || 'Другое';
+  const note = ($('rNote') && $('rNote').value) || '';
+  let messages = [];
+  if ($('rAttach') && $('rAttach').checked && cur && K(cur.peer) === K(login)) {
+    messages = cur.msgs.filter((m) => K(m.f) === K(login) && m.text !== null).slice(-10)
+      .map((m) => ({ f: m.f, ts: m.ts, text: fileOf(m.text) ? '[файл] ' + fileOf(m.text).n : m.text }));
+  }
+  try {
+    await api('/api/report', { login, reason, note, messages });
+    if (isBlocked(login)) return toast('Жалоба отправлена администратору', 3000);
+    infoSheet('Жалоба отправлена', `<p class="mute">Администратор рассмотрит её. Заблокировать ${esc(login)}, чтобы он(а) больше не мог(ла) с вами связаться?</p>`,
+      [{ label: 'Заблокировать', danger: true, on: () => setBlocked(login, true) }, { label: 'Не сейчас' }]);
+  } catch (e) { toast(e.message); }
+}
+$('bMore').onclick = () => {
+  if (!cur) return; const peer = cur.peer, b = isBlocked(peer);
+  infoSheet(peer, '', [
+    { label: 'Пожаловаться', on: () => askReport(peer) },
+    b ? { label: 'Разблокировать', primary: true, on: () => setBlocked(peer, false) } : { label: 'Заблокировать', danger: true, on: () => askBlock(peer) },
+    { label: 'Закрыть' },
+  ]);
+};
+$('bUnblock').onclick = () => cur && setBlocked(cur.peer, false);
+$('bBlocked').onclick = () => {
+  if (!blocked.size) return toast('Вы никого не блокировали');
+  const names = [...blocked].map((k) => (users.find((u) => K(u.login) === k) || { login: k }).login);
+  infoSheet('Заблокированные', names.map((n) => `<div class="blk-row"><b>${esc(n)}</b><button class="pill" data-unblock="${esc(n)}">Разблокировать</button></div>`).join(''), [{ label: 'Готово' }]);
+};
+$('infoBody').addEventListener('click', (e) => {
+  const u = e.target.closest('[data-unblock]'); if (!u) return;
+  setBlocked(u.dataset.unblock, false); u.closest('.blk-row').remove();
+});
+
+// ---------- документы: политика конфиденциальности и условия ----------
+async function showDoc(kind) {
+  try {
+    const html = await (await fetch('/' + kind + '.html')).text();
+    const doc = new DOMParser().parseFromString(html, 'text/html'), main = doc.querySelector('main');
+    infoSheet(doc.title || '', `<div class="doc">${main ? main.innerHTML : ''}</div>`, [{ label: 'Закрыть', primary: true }]);
+  } catch { toast('Не удалось открыть документ'); }
+}
+document.addEventListener('click', (e) => {
+  const d = e.target.closest('[data-doc]'); if (!d) return;
+  e.preventDefault(); showDoc(d.dataset.doc);
+});
+
+// ---------- удаление аккаунта ----------
+$('bDelAcc').onclick = () => {
+  infoSheet('Удалить аккаунт?', `<p>Будут безвозвратно удалены ваш профиль, контакты, вся переписка и отправленные файлы — у вас и у ваших собеседников. Восстановить их будет невозможно.</p>
+    <input type="password" id="delPass" placeholder="Введите пароль для подтверждения" autocomplete="current-password">`,
+    [{ label: 'Удалить навсегда', danger: true, on: async () => {
+      const password = $('delPass').value;
+      if (!password) return toast('Введите пароль');
+      try { await api('/api/account/delete', { password }); toast('Аккаунт удалён', 3000); logout(true); }
+      catch (e) { toast(e.message, 3500); }
+    } }, { label: 'Отмена' }]);
+};
 
 // ---------- файлы (сквозное шифрование) ----------
 // Сообщение о файле — обычное зашифрованное сообщение с текстом «HXF1:{...}»: в нём id файла на сервере,
@@ -1111,12 +1201,12 @@ function ring(on) {
 const REPO = 'Arthuralend/Heraxos';
 const APK_URL = `https://github.com/${REPO}/releases/latest/download/Ahazang.apk`;
 const WHATS_NEW = [
-  'Отправка файлов, фото и видео (до 100 МБ) со сквозным шифрованием: на сервере они лежат только в зашифрованном виде',
-  'Во время видеозвонка нажмите на экран — кнопки спрячутся, нажмите ещё раз — появятся. Сами прячутся через 5 секунд',
-  'Голос в приоритете над видео: меньше обрывов и «бульканья» в мобильной сети',
-  'Групповые видеозвонки легче для телефона: видео в группе до 540p',
-  'Только вертикальный режим экрана; на Android 15 интерфейс больше не залезает под строку состояния',
-  'Новый сервер ahazang.klegal.ru; Ahazang работает только в приложениях для Android и iPhone',
+  'Блокировка: в чате «⋮» → «Заблокировать» — человек больше не сможет писать и звонить',
+  'Жалобы: «⋮» → «Пожаловаться» — администратор рассмотрит в течение суток',
+  'Удаление аккаунта: «Настройки» → «Удалить аккаунт»',
+  'Политика конфиденциальности, условия использования и поддержка — в «Настройках»',
+  'Отправка файлов, фото и видео со сквозным шифрованием (до 100 МБ)',
+  'Во время видеозвонка нажмите на экран — кнопки спрячутся, нажмите ещё раз — появятся',
 ];
 const androidVersion = () => { try { return AND && AND.appVersion ? +AND.appVersion() || 0 : 0; } catch { return 0; } };
 function infoSheet(title, html, actions) {
@@ -1124,7 +1214,7 @@ function infoSheet(title, html, actions) {
   const A = $('infoActs'); A.innerHTML = '';
   for (const a of actions) {
     const b = document.createElement(a.href ? 'a' : 'button');
-    b.className = 'btn' + (a.primary ? '' : ' ghost'); b.textContent = a.label;
+    b.className = 'btn' + (a.danger ? ' danger' : a.primary ? '' : ' ghost'); b.textContent = a.label;
     if (a.href) { b.href = a.href; b.target = '_blank'; b.rel = 'noopener'; }
     b.onclick = () => { $('info').classList.remove('on'); a.on && a.on(); };
     A.appendChild(b);
