@@ -27,21 +27,24 @@ jobs:
           KS: ${{ secrets.ANDROID_KEYSTORE_B64 }}
           PW: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: |
-          [ -n "$PW" ] || { echo "::error::Секрет ANDROID_KEYSTORE_PASSWORD пустой или не добавлен (Settings → Secrets and variables → Actions → Repository secrets)"; exit 1; }
-          [ -n "$KS" ] || { echo "::error::Секрет ANDROID_KEYSTORE_B64 пустой или не добавлен (Settings → Secrets and variables → Actions → Repository secrets)"; exit 1; }
-          # при вставке строка могла получить пробелы, переносы или лишний текст вокруг —
-          # берём самую длинную непрерывную base64-строку
-          printf '%s' "$KS" | tr -d '\r\n\t ' | grep -oE '[A-Za-z0-9+/]{200,}={0,2}' | awk '{ if (length($0) > length(m)) m = $0 } END { printf "%s", m }' > ks.b64
-          echo "Длина ANDROID_KEYSTORE_B64: $(wc -c < ks.b64) символов (ожидается 5732)"
-          base64 -d ks.b64 > app/ahazang.jks 2>/dev/null || { echo "::error::ANDROID_KEYSTORE_B64 испорчен при копировании (не base64). Вставьте строку из файла ANDROID_KEYSTORE_B64.txt целиком"; exit 1; }
+          [ -n "$KS$PW" ] || { echo "::error::Секреты ANDROID_KEYSTORE_B64 и ANDROID_KEYSTORE_PASSWORD пустые (Settings → Secrets and variables → Actions)"; exit 1; }
+          # Ключ и пароль ищем в ОБОИХ секретах: их могли перепутать или вставить вместе с текстом инструкции.
+          ALL=$(printf '%s\n%s\n' "$KS" "$PW")
+          # ключ — самая длинная непрерывная base64-строка
+          { printf '%s' "$KS" | tr -d '\r\n\t ' | grep -oE '[A-Za-z0-9+/]{200,}={0,2}'; echo; printf '%s' "$PW" | tr -d '\r\n\t ' | grep -oE '[A-Za-z0-9+/]{200,}={0,2}'; } \
+            | awk '{ if (length($0) > length(m)) m = $0 } END { printf "%s", m }' > ks.b64
+          echo "Длина найденного ключа: $(wc -c < ks.b64) символов (ожидается 5732)"
+          [ -s ks.b64 ] || { echo "::error::Ключ не найден ни в одном секрете. Вставьте в ANDROID_KEYSTORE_B64 строку из файла ANDROID_KEYSTORE_B64.txt"; exit 1; }
+          base64 -d ks.b64 > app/ahazang.jks 2>/dev/null || { echo "::error::Ключ испорчен при копировании. Вставьте строку из файла ANDROID_KEYSTORE_B64.txt целиком"; exit 1; }
           rm ks.b64
-          # пароль мог вставиться с пробелами, переносом или соседним текстом — пробуем варианты
+          # пароль — пробуем секреты как есть, без пробелов и каждое «слово» 16–40 символов из обоих
           OK=""
-          # кандидаты: пароль как есть, без пробелов, «слова» из обоих секретов (если секреты перепутаны или вставлен весь файл)
-          for cand in "$PW" "$(printf '%s' "$PW" | tr -d ' \r\n\t')" $( { printf '%s\n' "$PW"; printf '%s\n' "$KS"; } | grep -oE '(^|[^A-Za-z0-9+/=])[A-Za-z0-9]{16,40}($|[^A-Za-z0-9+/=])' | grep -oE '[A-Za-z0-9]{16,40}' | sort -u); do
+          for cand in "$PW" "$KS" "$(printf '%s' "$PW" | tr -d ' \r\n\t')" "$(printf '%s' "$KS" | tr -d ' \r\n\t')" \
+              $(printf '%s\n' "$ALL" | grep -oE '(^|[^A-Za-z0-9+/=])[A-Za-z0-9]{16,40}($|[^A-Za-z0-9+/=])' | grep -oE '[A-Za-z0-9]{16,40}' | sort -u); do
+            [ -n "$cand" ] || continue
             if keytool -list -keystore app/ahazang.jks -storepass "$cand" -alias ahazang >/dev/null 2>&1; then OK="$cand"; break; fi
           done
-          [ -n "$OK" ] || { echo "::error::Ключ не открывается: в секрете ANDROID_KEYSTORE_PASSWORD неверный пароль (длина $(printf '%s' "$PW" | wc -c) символов, ожидается 24)"; exit 1; }
+          [ -n "$OK" ] || { echo "::error::Пароль ключа не найден. В ANDROID_KEYSTORE_PASSWORD должно быть: пароль из 24 символов"; exit 1; }
           echo "::add-mask::$OK"
           echo "KS_PASS=$OK" >> "$GITHUB_ENV"
           echo "Ключ подписи в порядке"
