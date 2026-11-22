@@ -488,3 +488,23 @@ html.is-android .androidOnly{display:flex!important}
 .t-btn{width:clamp(50px,14.5vw,68px);height:clamp(50px,14.5vw,68px);border-radius:50%;border:0;background:radial-gradient(circle at 38% 32%,#e8906f,#c96442 55%,#9f4a2c);color:#fff3ea;font:700 20px var(--serif);
   box-shadow:0 5px 0 #6e321d,0 8px 14px rgba(0,0,0,.45);touch-action:none}
 .t-btn.on,.t-btn:active{transform:translateY(4px);box-shadow:0 1px 0 #6e321d,0 3px 8px rgba(0,0,0,.45)}
+/* приглашение в игру в чате */
+.b.ginv{display:grid;grid-template-columns:56px 1fr;gap:4px 12px;align-items:center;min-width:240px;padding:10px 12px 8px}
+.b.ginv .art{width:56px;height:56px;grid-row:span 2}
+.gi-t small{display:block;color:var(--mute);font-size:12.5px} .gi-t b{font:500 19px/1.2 var(--serif)}
+.gi-btn{grid-column:2;justify-self:start;border:0;border-radius:12px;padding:8px 14px;background:var(--brand);color:#fff;font-weight:600;font-size:14.5px}
+.gi-btn.mine{background:transparent;color:var(--mute);padding:4px 0;font-weight:500}
+.b.ginv .meta{grid-column:1/-1}
+/* кнопки звонка в игре */
+.g-cc{display:flex;gap:6px;flex:none}
+.g-cc[hidden]{display:none}
+.g-cc button{border:0;width:44px;height:44px;border-radius:50%;background:var(--panel2);color:var(--text);display:grid;place-items:center;padding:0}
+.g-cc button svg{width:21px;height:21px}
+.g-cc button[hidden]{display:none}
+.g-cc [data-cc=call]{background:var(--green);color:#fff}
+.g-cc [data-cc=call].end{background:var(--red)}
+.g-cc [data-cc=cam].on{background:var(--brand);color:#fff}
+.g-cc [data-cc=mic].off{background:var(--text);color:var(--bg)}
+.t-cc{position:absolute;right:10px;bottom:10px}
+.t-cc button{background:rgba(242,232,218,.16);color:#f2e8da}
+.chathead #bGameChat{margin-right:-4px}

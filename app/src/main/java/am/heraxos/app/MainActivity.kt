@@ -44,6 +44,13 @@ class MainActivity : Activity() {
         private const val BG = 0xFFFAF9F5.toInt()
         private const val BG_DARK = 0xFF1A1918.toInt()
 
+        /** Ответ на приглашение в игру с экрана звонка */
+        fun answerGame(c: Context, yes: Boolean) {
+            val a = current
+            if (yes) c.startActivity(Intent(c, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP))
+            a?.runOnUiThread { a.web.evaluateJavascript("window.hxGameAnswer && hxGameAnswer($yes)", null) }
+        }
+
         /** Нативный звонок закончился — вкладка «Звонки» забирает новую запись */
         fun callLogChanged() {
             val a = current ?: return
@@ -82,7 +89,8 @@ class MainActivity : Activity() {
         val active = e.busy && e.state != CallEngine.State.RINGING
         val p = e.peers.values.firstOrNull()
         val st = org.json.JSONObject().put("active", active).put("peer", if (active) e.peerLogin else "")
-            .put("camOn", active && e.camOn).put("remoteVideo", active && p?.video == true && p.remoteVideo != null).toString()
+            .put("camOn", active && e.camOn).put("muted", active && e.muted)
+            .put("remoteVideo", active && p?.video == true && p.remoteVideo != null).toString()
         if (st != lastCallState) { lastCallState = st; web.evaluateJavascript("window.hxCallState && hxCallState($st)", null) }
     }
 
@@ -542,6 +550,16 @@ class MainActivity : Activity() {
                 CallEngine.gameCamera(on)
             }
         }
+
+        /** Приглашение в игру, пока открыт экран звонка: показываем его поверх звонка */
+        @JavascriptInterface
+        fun gameInvite(name: String, title: String) { runOnUiThread { CallActivity.showGameInvite(name, title) } }
+
+        @JavascriptInterface
+        fun hangupCall() { runOnUiThread { CallEngine.hangup() } }
+
+        @JavascriptInterface
+        fun gameMute(on: Boolean) { runOnUiThread { if (CallEngine.muted != on) CallEngine.toggleMute() } }
 
         /** Видеозвонок из игры: без экрана звонка — видео сразу над доской */
         @JavascriptInterface

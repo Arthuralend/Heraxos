@@ -480,7 +480,7 @@
         <div class="t-mid"><b class="t-lv">Уровень 1</b><span class="t-left"></span></div>
         <div class="t-side r"><div class="t-pl"><b class="t-n1"></b><span class="t-l1"></span></div>${two ? `<div class="vslot t-v" data-who="me"></div>` : ''}</div>
       </div>
-      <div class="t-stage"><canvas></canvas><div class="t-msg" hidden></div><button class="g-cam t-cam" hidden><svg><use href="#i-video"/></svg></button></div>
+      <div class="t-stage"><canvas></canvas><div class="t-msg" hidden></div>${o.callCtlHTML('t-cc')}</div>
       <div class="t-pad">
         <div class="t-dpad" aria-label="Крестовина"><i class="u"></i><i class="r"></i><i class="d"></i><i class="l"></i><b></b></div>
         <div class="t-meta"><div class="t-brand">РУБЕЖ</div><div class="t-sel"><button data-x="select">ВЫХОД</button><button data-x="start">ПАУЗА</button></div></div>

@@ -35,6 +35,9 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
           callLogReady: function() { window.webkit.messageHandlers.hx.postMessage({a: 'callLog'}); },
           setVideoSlots: function(j) { window.webkit.messageHandlers.hx.postMessage({a: 'slots', j: String(j || '')}); },
           gameCamera: function(on) { window.webkit.messageHandlers.hx.postMessage({a: 'gameCam', on: !!on}); },
+          gameMute: function(on) { window.webkit.messageHandlers.hx.postMessage({a: 'gameMute', on: !!on}); },
+          hangupCall: function() { window.webkit.messageHandlers.hx.postMessage({a: 'hangup'}); },
+          gameInvite: function(n, t) { window.webkit.messageHandlers.hx.postMessage({a: 'gameInvite', n: String(n), t: String(t)}); },
           startCallStay: function(l, t, v) { window.webkit.messageHandlers.hx.postMessage({a: 'startCall', l: String(l), t: String(t || ''), v: !!v, stay: true}); },
           setBars: function(dark) { window.webkit.messageHandlers.hx.postMessage({a: 'bars', dark: !!dark}); },
           fileBegin: function(sid, name, type) { window.webkit.messageHandlers.hx.postMessage({a: 'fileBegin', sid: String(sid), name: String(name)}); },
@@ -131,6 +134,9 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
                                              stay: d["stay"] as? Bool ?? false)
         case "slots": CallManager.shared.setVideoSlots(d["j"] as? String ?? "")
         case "gameCam": CallManager.shared.gameCamera(d["on"] as? Bool ?? false)
+        case "gameMute": CallManager.shared.requestMute(d["on"] as? Bool ?? false)
+        case "hangup": CallManager.shared.requestEnd()
+        case "gameInvite": CallManager.shared.gameInvite(name: d["n"] as? String ?? "", title: d["t"] as? String ?? "")
         case "openCall": CallManager.shared.showCallUI()
         case "callLog": pushCallLog()
         case "bars":

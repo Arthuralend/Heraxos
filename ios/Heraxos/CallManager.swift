@@ -276,6 +276,18 @@ final class CallManager: NSObject, PKPushRegistryDelegate, CXProviderDelegate {
     /// Экран звонка свернули — звонок идёт, сверху зелёная плашка
     func callUIClosed() { callVC = nil; updatePill(); updateVideoOverlay() }
 
+    /// Приглашение в игру, пока открыт экран звонка: показываем поверх него
+    func gameInvite(name: String, title: String) {
+        guard let vc = callVC, vc.presentedViewController == nil else { return }
+        let ac = UIAlertController(title: "\(name) приглашает сыграть", message: "🎮 \(title)\n\nЗвонок продолжится — видео собеседника будет над игрой.", preferredStyle: .alert)
+        ac.addAction(UIAlertAction(title: "Отказаться", style: .cancel) { [weak self] _ in self?.web?.evaluate("window.hxGameAnswer && hxGameAnswer(false)") })
+        ac.addAction(UIAlertAction(title: "Играть", style: .default) { [weak self] _ in
+            self?.callVC?.dismiss(animated: true)
+            self?.web?.evaluate("window.hxGameAnswer && hxGameAnswer(true)")
+        })
+        vc.present(ac, animated: true)
+    }
+
     /// Кнопка игр на экране звонка: экран сворачивается, открываются игры с собеседником
     func openGames(peer: String) {
         let safe = peer.filter { $0.isLetter || $0.isNumber || "_.-".contains($0) }
@@ -324,7 +336,7 @@ final class CallManager: NSObject, PKPushRegistryDelegate, CXProviderDelegate {
         let e = CallEngine.shared
         let active = e.busy && e.state != .ringing
         let p = e.peers.first
-        let st: [String: Any] = ["active": active, "peer": active ? e.peerLogin : "", "camOn": active && e.camOn,
+        let st: [String: Any] = ["active": active, "peer": active ? e.peerLogin : "", "camOn": active && e.camOn, "muted": active && e.muted,
                                  "remoteVideo": active && p?.video == true && p?.remoteVideo != nil]
         guard let d = try? JSONSerialization.data(withJSONObject: st, options: [.sortedKeys]), let json = String(data: d, encoding: .utf8),
               json != lastCallState else { return }

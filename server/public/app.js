@@ -1,5 +1,5 @@
 // Ahazang — клиент
-const APP_VERSION = '12';
+const APP_VERSION = '13';
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 let token = localStorage.getItem('hx_token'), me = localStorage.getItem('hx_me');
@@ -454,7 +454,13 @@ function renderMsgs(scroll) {
     const day = fmtDay(m.ts); if (day !== lastDay) { html += `<div class="day"><span>${day}</span></div>`; lastDay = day; lastF = ''; }
     const mine = m.f.toLowerCase() === me.toLowerCase();
     const st = !mine ? '' : m.pending ? CLOCK : m.ts <= cur.peerRead ? TICK2 : TICK1;
-    const f = m.file || fileOf(m.text), i = cur.msgs.indexOf(m);
+    const f = m.file || fileOf(m.text), i = cur.msgs.indexOf(m), gi = gameOf(m.text);
+    if (gi) {
+      const title = window.hxGameTitle ? hxGameTitle(gi.g) : 'Игра';
+      html += `<div class="m ${mine ? 'o' : ''} ${m.f !== lastF ? 'first' : ''}"><div class="b ginv">${window.hxGameArt ? hxGameArt(gi.g) : ''}<div class="gi-t"><small>${mine ? 'Вы пригласили сыграть' : 'Приглашение сыграть'}</small><b>${esc(title)}</b></div>
+        <button class="gi-btn${mine ? ' mine' : ''}" data-gi="${i}">${mine ? 'Ждём соперника' : '🎮 Играть'}</button><span class="meta">${fmtTime(m.ts)} ${st}</span></div></div>`;
+      lastF = m.f; continue;
+    }
     if (f) {
       html += `<div class="m ${mine ? 'o' : ''} ${m.f !== lastF ? 'first' : ''}"><div class="b file" data-fi="${i}">${fileHTML(f, m)}<span class="meta">${fmtTime(m.ts)} ${st}</span></div></div>`;
       lastF = m.f; continue;
@@ -476,6 +482,37 @@ function markRead() {
   api('/api/read/' + encodeURIComponent(cur.peer.toLowerCase()), { ts }).then(loadChatsSoon).catch(() => {});
 }
 
+/** Отправить зашифрованный текст любому собеседнику (используют игры для приглашений) */
+window.hxSendChatText = async (peer, text) => {
+  const open = cur && K(cur.peer) === K(peer);
+  let pub = open ? cur.pub : null;
+  if (!pub) pub = await peerKey(peer, true).catch(() => null);
+  if (!pub) { toast('Собеседник ещё ни разу не входил — ключа шифрования пока нет'); return false; }
+  if (open) cur.pub = pub;
+  const { iv, ct } = await HX.seal(pub, text);
+  const cid = Math.random().toString(36).slice(2);
+  if (open) { cur.msgs.push({ cid, f: me, ts: Date.now(), text, pending: true }); renderMsgs(true); }
+  if (!send({ type: 'msg', to: peer, iv, ct, cid })) { toast('Нет соединения, приглашение не отправлено'); return false; }
+  if (!open) setTimeout(loadChatsSoon, 600);
+  return true;
+};
+$('msgs').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-gi]'); if (!b || !cur) return;
+  const m = cur.msgs[+b.dataset.gi], gi = m && gameOf(m.text); if (!gi) return;
+  window.hxChatJoin && hxChatJoin(m.f, gi, K(m.f) === K(me));
+});
+// кнопка игр в шапке чата: выбрать игру и отправить приглашение
+$('bGameChat').onclick = () => {
+  if (!cur) return;
+  if (isBlocked(cur.peer)) return toast('Пользователь заблокирован');
+  const peer = cur.peer;
+  infoSheet('Пригласить сыграть', `<p class="mute">${esc(dn(peer))} получит приглашение в чате — игра начнётся, когда он(а) нажмёт «Играть».</p>`, [
+    { label: '♞ Шахматы', primary: true, on: () => hxChatInvite(peer, 'chess') },
+    { label: '⛀ Шашки', on: () => hxChatInvite(peer, 'checkers') },
+    { label: '🛡 Танки «Рубеж»', on: () => hxChatInvite(peer, 'tanks') },
+    { label: 'Отмена' },
+  ]);
+};
 async function sendMsg() {
   const text = $('txt').value.trim(); if (!text || !cur) return;
   if (!cur.pub) { cur.pub = await peerKey(cur.peer, true).catch(() => null); if (!cur.pub) return toast('Собеседник ещё ни разу не входил — ключа шифрования пока нет'); }
@@ -598,9 +635,12 @@ $('bDelAcc').onclick = () => {
 // Сообщение о файле — обычное зашифрованное сообщение с текстом «HXF1:{...}»: в нём id файла на сервере,
 // ключ и IV для расшифровки, имя, размер, тип и маленькое превью фото. Сам файл на сервере лежит зашифрованным.
 const MAX_FILE_MB = 100;
+// приглашение в игру сообщением: HXG1:{"g":"chess","id":"…","c":"w"}
+const gameOf = (t) => { if (typeof t !== 'string' || !t.startsWith('HXG1:')) return null; try { const o = JSON.parse(t.slice(5)); return o && o.g && o.id ? o : null; } catch { return null; } };
 const fileOf = (t) => { if (typeof t !== 'string' || !t.startsWith('HXF1:')) return null; try { return JSON.parse(t.slice(5)); } catch { return null; } };
 const kindOf = (f) => (/^image\//.test(f.t) ? 'image' : /^video\//.test(f.t) ? 'video' : /^audio\//.test(f.t) ? 'audio' : 'file');
 function previewOf(t) {
+  const gi = gameOf(t); if (gi) return '🎮 Приглашение: ' + (window.hxGameTitle ? hxGameTitle(gi.g) : 'игра');
   const f = fileOf(t); if (!f) return t;
   return { image: '📷 Фото', video: '🎬 Видео', audio: '🎵 Аудио', file: '📎 ' + f.n }[kindOf(f)];
 }
@@ -1327,6 +1367,8 @@ function ring(on) {
 const REPO = 'Arthuralend/Heraxos';
 const APK_URL = `https://github.com/${REPO}/releases/latest/download/Ahazang.apk`;
 const WHATS_NEW = [
+  'Приглашение в игру прямо в чате: кнопка 🎮 в шапке переписки, у собеседника появится карточка «Играть»',
+  'Во время игры — кнопки звонка: позвонить, завершить, включить видео и микрофон; приглашение видно и поверх экрана звонка',
   'Игры: шахматы, шашки и танки «Рубеж» — вдвоём или с компьютером. Кнопка 🎮 слева сверху на экране чатов',
   'Во время звонка можно играть и видеть друг друга: видео собеседника прямо над доской, у кого ход — подсвечено',
   'В «Звонках» долгое нажатие на запись: позвонить, написать, сыграть, заблокировать или удалить звонок',
