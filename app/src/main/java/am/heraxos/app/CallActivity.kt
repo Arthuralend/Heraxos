@@ -35,7 +35,24 @@ import org.webrtc.VideoTrack
  */
 class CallActivity : Activity(), CallEngine.Listener {
 
-    companion object { @Volatile var visible = false }
+    companion object {
+        @Volatile var visible = false
+        private var ref: java.lang.ref.WeakReference<CallActivity>? = null
+
+        /** Приглашение в игру поверх экрана звонка */
+        fun showGameInvite(name: String, title: String) {
+            val a = ref?.get() ?: return
+            if (!visible || a.isFinishing) return
+            a.inviteDialog?.dismiss()
+            a.inviteDialog = AlertDialog.Builder(a, AlertDialog.THEME_DEVICE_DEFAULT_DARK)
+                .setTitle("$name приглашает сыграть")
+                .setMessage("🎮 $title\n\nЗвонок продолжится — видео собеседника будет над игрой.")
+                .setPositiveButton("Играть") { _, _ -> MainActivity.answerGame(a, true); a.finish() }
+                .setNegativeButton("Отказаться") { _, _ -> MainActivity.answerGame(a, false) }
+                .show()
+        }
+    }
+    private var inviteDialog: AlertDialog? = null
 
     private val main = Handler(Looper.getMainLooper())
     private lateinit var root: FrameLayout
@@ -66,6 +83,7 @@ class CallActivity : Activity(), CallEngine.Listener {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         CallEngine.init(this)
+        ref = java.lang.ref.WeakReference(this)
         if (Build.VERSION.SDK_INT >= 27) { setShowWhenLocked(true); setTurnScreenOn(true) }
         @Suppress("DEPRECATION")
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
@@ -100,6 +118,7 @@ class CallActivity : Activity(), CallEngine.Listener {
     }
 
     override fun onDestroy() {
+        inviteDialog?.dismiss()
         for ((_, r) in renderers) { runCatching { r.second.removeSink(r.first) }; r.first.release() }
         renderers.clear()
         localTrack?.let { runCatching { it.removeSink(local) } }

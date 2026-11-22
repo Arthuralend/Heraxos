@@ -148,8 +148,28 @@
           { label: 'Играть', primary: true, on: () => acceptInvite(m) },
           { label: 'Отказаться', on: () => { send({ type: 'game', to: from, g: m.g, k: 'decline' }); incoming = null; } },
         ]);
+        // если сейчас открыт экран звонка — приложение покажет приглашение поверх него
+        call0('gameInvite', dn(from), (GAMES[m.game] || {}).title || 'Игра');
         return;
       }
+      case 'join': { // соперник нажал «Играть» в приглашении из чата
+        const inv = openInvites()[m.g];
+        if (!inv || KK(inv.peer) !== KK(from) || Date.now() - inv.ts > INVITE_TTL) return send({ type: 'game', to: from, g: m.g, k: 'decline', reason: 'expired' });
+        if ((S && !S.finished) || waiting) return send({ type: 'game', to: from, g: m.g, k: 'decline', reason: 'busy' });
+        dropInvite(m.g);
+        send({ type: 'game', to: from, g: m.g, k: 'go' });
+        toast(`${dn(from)} принял(а) приглашение`, 2000);
+        if (S) leaveGame(false);
+        startGame({ id: m.g, kind: inv.kind, peer: from, color: inv.color, host: true });
+        return;
+      }
+      case 'go':
+        if (joining && joining.id === m.g) {
+          const j = joining; joining = null; clearTimeout(joinT);
+          if (S) leaveGame(false);
+          startGame({ id: j.id, kind: j.kind, peer: from, color: j.color === 'w' ? 'b' : 'w', host: false });
+        }
+        return;
       case 'cancel':
         if (incoming && incoming.g === m.g) { incoming = null; $('info').classList.remove('on'); toast(`${dn(from)} отменил(а) приглашение`); }
         return;
@@ -157,9 +177,20 @@
         if (waiting && waiting.id === m.g) {
           const w = waiting; waiting = null; clearTimeout(invite.t);
           startGame({ id: w.id, kind: w.kind, peer: w.peer, color: w.color, host: true });
+        } else if (openInvites()[m.g] && (!S || S.finished)) { // приняли живое приглашение, отправленное из чата
+          const inv = openInvites()[m.g]; dropInvite(m.g);
+          toast(`${dn(from)} принял(а) приглашение`, 2000);
+          if (S) leaveGame(false);
+          startGame({ id: m.g, kind: inv.kind, peer: from, color: inv.color, host: true });
         }
         return;
       case 'decline':
+        if (joining && joining.id === m.g) {
+          joining = null; clearTimeout(joinT);
+          toast(m.reason === 'busy' ? `${dn(from)} сейчас играет в другую игру` : m.reason === 'expired' ? 'Приглашение уже недействительно — попросите прислать новое' : `${dn(from)} отказался(ась)`, 3200);
+          closeAll();
+          return;
+        }
         if (waiting && waiting.id === m.g) {
           waiting = null; clearTimeout(invite.t);
           toast(m.reason === 'busy' ? `${dn(from)} сейчас играет в другую игру` : `${dn(from)} отказался(ась)`, 2800);
@@ -167,6 +198,7 @@
         }
         return;
       case 'offline':
+        if (joining && joining.id === m.g) { joining = null; clearTimeout(joinT); toast(`${dn(from)} сейчас не в сети — откройте приглашение, когда он(а) будет в приложении`, 3500); closeAll(); return; }
         if (waiting && waiting.id === m.g) { waiting = null; clearTimeout(invite.t); toast(`${dn(from)} не в сети`, 2600); openHub(hubPeer); }
         else if (S && S.id === m.g) toast(`${dn(from)} не в сети — ход не дошёл`, 2600);
         return;
@@ -180,6 +212,54 @@
       S.ctrl && S.ctrl.onNet && S.ctrl.onNet(m);
     }
   };
+
+  // ответ на приглашение с экрана звонка (кнопки в приложении)
+  window.hxGameAnswer = (yes) => {
+    const m = incoming; if (!m) return;
+    $('info').classList.remove('on');
+    if (yes) acceptInvite(m);
+    else { send({ type: 'game', to: m.from, g: m.g, k: 'decline' }); incoming = null; }
+  };
+
+  // ---------- приглашения через чат: карточка в переписке, действует сутки ----------
+  const INVITE_TTL = 24 * 3600e3;
+  const invKey = () => 'hx_ginv_' + me;
+  function openInvites() { try { return JSON.parse(localStorage.getItem(invKey()) || '{}'); } catch { return {}; } }
+  function saveInvites(o) {
+    for (const [k, v] of Object.entries(o)) if (Date.now() - v.ts > INVITE_TTL) delete o[k];
+    try { localStorage.setItem(invKey(), JSON.stringify(o)); } catch {}
+  }
+  function dropInvite(id) { const o = openInvites(); delete o[id]; saveInvites(o); }
+
+  /** Отправить приглашение сообщением в чат (и сразу всплывающим окном, если человек в приложении) */
+  window.hxChatInvite = async (peer, kind) => {
+    const id = rid(), o = openInvites();
+    o[id] = { kind, peer, color: 'w', ts: Date.now() }; saveInvites(o);
+    const ok = await window.hxSendChatText(peer, 'HXG1:' + JSON.stringify({ g: kind, id, c: 'w' }));
+    if (!ok) return;
+    if (online.has(KK(peer))) send({ type: 'game', to: peer, g: id, k: 'invite', game: kind, color: 'w' });
+    toast('Приглашение отправлено — игра начнётся, когда соперник нажмёт «Играть»', 2800);
+  };
+
+  /** Нажали «Играть» в карточке приглашения из чата */
+  let joining = null, joinT = null;
+  window.hxChatJoin = (from, inv, mine) => {
+    if (mine) {
+      if (!openInvites()[inv.id]) return toast('Это приглашение уже использовано — отправьте новое', 2400);
+      return toast(`Ждём, когда ${dn(cur ? cur.peer : '')} нажмёт «Играть»`, 2400);
+    }
+    if (S && !S.finished) return toast('Сначала закончите текущую игру');
+    if (!GAMES[inv.g]) return;
+    joining = { id: inv.id, kind: inv.g, color: inv.c || 'w', peer: from };
+    send({ type: 'game', to: from, g: inv.id, k: 'join', game: inv.g });
+    show(`<div class="g-wait">${avaHTML(from, true)}<h3>${esc(dn(from))}</h3><p class="mute">Подключаемся к игре<br>«${GAMES[inv.g].title}»…</p>
+      <div class="g-dots"><i></i><i></i><i></i></div><button class="btn ghost" data-x="cancel">Отменить</button></div>`);
+    root.querySelector('[data-x=cancel]').onclick = () => { joining = null; clearTimeout(joinT); closeAll(); };
+    clearTimeout(joinT);
+    joinT = setTimeout(() => { if (joining) { joining = null; toast(`${dn(from)} не отвечает — возможно, приложение закрыто`, 3000); closeAll(); } }, 15000);
+  };
+  window.hxGameTitle = (k) => (GAMES[k] || {}).title || 'Игра';
+  window.hxGameArt = (k) => ART[k] || '';
 
   function acceptInvite(m) {
     incoming = null;
@@ -217,21 +297,54 @@
     return `<div class="g-bar" data-who="${who}">
       <div class="vslot" data-who="${who}">${avaHTML(login || me, false)}</div>
       <div class="g-pl"><b>${esc(label)}</b><small class="g-st"></small><div class="g-caps"></div></div>
-      ${who === 'me' ? '<button class="g-cam" title="Камера" hidden><svg><use href="#i-video"/></svg></button>' : ''}
+      ${who === 'me' ? callCtlHTML() : ''}
     </div>`;
   }
+
+  /** Кнопки звонка в игре: позвонить / завершить, видео, микрофон */
+  function callCtlHTML(extra = '') {
+    return `<div class="g-cc ${extra}" hidden>
+      <button data-cc="call" title="Позвонить"><svg><use href="#i-phone"/></svg></button>
+      <button data-cc="cam" title="Видео"><svg><use href="#i-video"/></svg></button>
+      <button data-cc="mic" title="Микрофон" hidden><svg><use href="#i-mic"/></svg></button></div>`;
+  }
+  const inCallWith = (peer) => callState.active && KK(callState.peer) === KK(peer);
+  function callControls() {
+    const box = root.querySelector('.g-cc'); if (!box) return;
+    box.querySelector('[data-cc=call]').onclick = () => {
+      if (!S || !S.peer) return;
+      if (inCallWith(S.peer)) { call0('hangupCall'); return; }
+      if (callState.active) return toast('Сейчас идёт другой звонок');
+      call0('startCallStay', S.peer, dn(S.peer), false); toast('Звоним — играйте и разговаривайте', 2000);
+    };
+    box.querySelector('[data-cc=cam]').onclick = () => {
+      if (!S || !S.peer) return;
+      if (inCallWith(S.peer)) call0('gameCamera', !callState.camOn);
+      else if (callState.active) toast('Сейчас идёт другой звонок');
+      else { call0('startCallStay', S.peer, dn(S.peer), true); toast('Звоним с видео — будете видеть друг друга', 2200); }
+    };
+    box.querySelector('[data-cc=mic]').onclick = () => call0('gameMute', !callState.muted);
+  }
+  const camButton = callControls;
 
   /** Видео в игре: прямоугольники полос игроков отдаём приложению, оно рисует поверх них видео звонка */
   let lastSlots = '';
   function refreshVideoUI() {
     const open = root.classList.contains('on') && S && S.peer;
     const inCall = open && callState.active && KK(callState.peer) === KK(S.peer);
-    const cam = root.querySelector('.g-cam');
-    if (cam) {
+    const cc = root.querySelector('.g-cc');
+    if (cc) {
       const canNative = typeof NATIVE !== 'undefined' && NATIVE;
-      cam.hidden = !(open && canNative);
-      cam.classList.toggle('on', !!(inCall && callState.camOn));
-      cam.title = inCall ? (callState.camOn ? 'Выключить камеру' : 'Включить камеру') : 'Видеозвонок — видеть друг друга во время игры';
+      cc.hidden = !(open && canNative);
+      const bc = cc.querySelector('[data-cc=call]'), bv = cc.querySelector('[data-cc=cam]'), bm = cc.querySelector('[data-cc=mic]');
+      bc.classList.toggle('end', !!inCall);
+      bc.innerHTML = `<svg><use href="#${inCall ? 'i-end' : 'i-phone'}"/></svg>`;
+      bc.title = inCall ? 'Завершить звонок' : 'Позвонить';
+      bv.classList.toggle('on', !!(inCall && callState.camOn));
+      bv.title = inCall ? (callState.camOn ? 'Выключить видео' : 'Включить видео') : 'Видеозвонок — видеть друг друга';
+      bm.hidden = !inCall;
+      bm.classList.toggle('off', !!callState.muted);
+      bm.title = callState.muted ? 'Включить микрофон' : 'Выключить микрофон';
     }
     root.querySelectorAll('.vslot').forEach((v) => v.classList.toggle('live', !!inCall && (v.dataset.who === 'me' ? callState.camOn : callState.remoteVideo)));
     let slots = '';
@@ -242,17 +355,6 @@
     if (slots !== lastSlots) { lastSlots = slots; call0('setVideoSlots', slots); }
   }
   window.addEventListener('resize', () => setTimeout(refreshVideoUI, 60));
-
-  function camButton() {
-    const b = root.querySelector('.g-cam'); if (!b) return;
-    b.onclick = () => {
-      if (!S || !S.peer) return;
-      const inCall = callState.active && KK(callState.peer) === KK(S.peer);
-      if (inCall) call0('gameCamera', !callState.camOn);
-      else if (callState.active) toast('Сейчас идёт другой звонок');
-      else { call0('startCallStay', S.peer, dn(S.peer), true); toast('Звоним с видео — будете видеть друг друга', 2200); }
-    };
-  }
 
   // =====================================================================
   // Шахматы и шашки: доска, ходы, сеть, компьютер
@@ -562,7 +664,7 @@
       sess,
       me, peerName: sess.peer ? dn(sess.peer) : '',
       send: (o) => gsend(o, sess),
-      bar: playerBar,
+      bar: playerBar, callCtlHTML,
       camButton, refreshVideoUI,
       exit: () => { if (S === sess) { leaveGame(true); openHub(''); } },
       askLeave,
