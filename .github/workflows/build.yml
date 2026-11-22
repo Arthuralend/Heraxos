@@ -36,14 +36,18 @@ jobs:
           echo "Длина найденного ключа: $(wc -c < ks.b64) символов (ожидается 5732)"
           [ -s ks.b64 ] || { echo "::error::Ключ не найден ни в одном секрете. Вставьте в ANDROID_KEYSTORE_B64 строку из файла ANDROID_KEYSTORE_B64.txt"; exit 1; }
           base64 -d ks.b64 > app/ahazang.jks 2>/dev/null || { echo "::error::Ключ испорчен при копировании. Вставьте строку из файла ANDROID_KEYSTORE_B64.txt целиком"; exit 1; }
-          rm ks.b64
           # пароль — пробуем секреты как есть, без пробелов и каждое «слово» 16–40 символов из обоих
           OK=""
-          for cand in "$PW" "$KS" "$(printf '%s' "$PW" | tr -d ' \r\n\t')" "$(printf '%s' "$KS" | tr -d ' \r\n\t')" \
+          # отпечатки (сам секрет не раскрывают): ключ должен быть 38bd1df24fc9, пароль — c249d47bf7d0
+          echo "Отпечаток ключа: $(sha256sum < ks.b64 2>/dev/null | cut -c1-12)$( [ -s ks.b64 ] || echo ' (см. выше)')"
+          PWC=$(printf '%s' "$PW" | tr -cd 'A-Za-z0-9')
+          echo "Пароль: ${#PW} символов, только буквы и цифры — ${#PWC}, отпечаток $(printf '%s' "$PWC" | sha256sum | cut -c1-12)"
+          for cand in "$PW" "$KS" "$PWC" "$(printf '%s' "$PW" | tr -d ' \r\n\t')" "$(printf '%s' "$KS" | tr -d ' \r\n\t')" \
               $(printf '%s\n' "$ALL" | grep -oE '(^|[^A-Za-z0-9+/=])[A-Za-z0-9]{16,40}($|[^A-Za-z0-9+/=])' | grep -oE '[A-Za-z0-9]{16,40}' | sort -u); do
             [ -n "$cand" ] || continue
             if keytool -list -keystore app/ahazang.jks -storepass "$cand" -alias ahazang >/dev/null 2>&1; then OK="$cand"; break; fi
           done
+          rm -f ks.b64
           [ -n "$OK" ] || { echo "::error::Пароль ключа не найден. В ANDROID_KEYSTORE_PASSWORD должно быть: пароль из 24 символов"; exit 1; }
           echo "::add-mask::$OK"
           echo "KS_PASS=$OK" >> "$GITHUB_ENV"
