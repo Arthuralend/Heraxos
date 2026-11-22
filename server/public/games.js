@@ -11,7 +11,7 @@
   const GAMES = {
     chess: { title: 'Шахматы', sub: 'Классика: мат, пат, рокировка, взятие на проходе', ai: true },
     checkers: { title: 'Шашки', sub: 'Русские шашки: бить обязательно, дамка ходит далеко', ai: true },
-    tanks: { title: 'Танчики 3D', sub: 'Защитите штаб вдвоём: по сети друг с другом или одному', ai: false, solo: true },
+    tanks: { title: 'Танчики 3D', sub: 'Защитите штаб от вражеских танков — одиночная игра', ai: false, solo: true, soloOnly: true },
   };
 
   // ---------- иконки ----------
@@ -92,6 +92,8 @@
 
   async function pickOpponent(kind) {
     const g = GAMES[kind];
+    // «Танчики 3D» — только в одиночку
+    if (g.soloOnly) return startGame({ id: rid(), kind, peer: '', ai: 0, color: 'w', host: true, solo: true });
     if (hubPeer) return invite(kind, hubPeer);
     try { await loadUsers(); } catch {}
     const list = users.filter((u) => !isBlocked(u.login)).sort((a, b) => (online.has(KK(b.login)) - online.has(KK(a.login))));
@@ -140,7 +142,7 @@
     switch (m.k) {
       case 'invite': {
         // идущая партия с другим — «занят»; законченная (экран итога) не мешает реваншу
-        if ((S && !S.finished && KK(S.peer) !== KK(from)) || waiting) return send({ type: 'game', to: from, g: m.g, k: 'decline', reason: 'busy' });
+        if ((S && !S.finished && KK(S.peer) !== KK(from)) || waiting || (GAMES[m.game] || {}).soloOnly || !GAMES[m.game]) return send({ type: 'game', to: from, g: m.g, k: 'decline', reason: 'busy' });
         incoming = m;
         try { navigator.vibrate && navigator.vibrate([80, 60, 80]); } catch {}
         beep(700, 0.12); setTimeout(() => beep(900, 0.14), 140);
@@ -250,6 +252,7 @@
     }
     if (S && !S.finished) return toast('Сначала закончите текущую игру');
     if (!GAMES[inv.g]) return;
+    if (GAMES[inv.g].soloOnly) return toast('В эту игру можно играть только одному — откройте её через кнопку 🎮', 2600);
     joining = { id: inv.id, kind: inv.g, color: inv.c || 'w', peer: from };
     send({ type: 'game', to: from, g: inv.id, k: 'join', game: inv.g });
     show(`<div class="g-wait">${avaHTML(from, true)}<h3>${esc(dn(from))}</h3><p class="mute">Подключаемся к игре<br>«${GAMES[inv.g].title}»…</p>
@@ -661,6 +664,7 @@
       if (d.t === 'ready') post({ t: 'start', role });
       else if (d.t === 'send' && d.m && sess.peer) gsend(d.m, sess);
       else if (d.t === 'exit') { if (S === sess) { leaveGame(true); openHub(''); } }
+      else if (d.t === 'leave') { if (S === sess) askLeave(); }
     };
     window.addEventListener('message', onMsg);
     callControls();
