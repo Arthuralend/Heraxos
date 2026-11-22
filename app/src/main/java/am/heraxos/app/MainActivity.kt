@@ -350,7 +350,14 @@ class MainActivity : Activity() {
 
         @JavascriptInterface
         fun setAudioRoute(route: String) {
-            runOnUiThread { AudioRoute.set(this@MainActivity, route) }
+            runOnUiThread {
+                AudioRoute.set(this@MainActivity, route)
+                // через 3,5 с пишем в журнал сервера, куда на самом деле идёт звук
+                if (route != "off") web.postDelayed({
+                    val d = AudioRoute.describe(this@MainActivity).replace("'", "")
+                    web.evaluateJavascript("window.hxDiag && hxDiag('audio-route', 'android $d')", null)
+                }, 3500)
+            }
         }
 
         /** Звонок начался / изменился (камера) / закончился */

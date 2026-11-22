@@ -9,9 +9,13 @@ import UIKit
 /// Здесь только выбираем, куда идёт звук: разговорный динамик или громкая связь.
 enum AudioRoute {
     private static var current = "off"
+    /// одно короткое переключение «громкая → у уха» за звонок: смена маршрута заставляет WebKit
+    /// заново подключить микрофон и динамик (без этого у уха бывало тихо, а на громкой — работало)
+    private static var kicked = false
 
     static func set(_ route: String) {
         DispatchQueue.main.async {
+            if route == "off" { kicked = false }
             current = route
             apply(route)
         }
@@ -20,6 +24,7 @@ enum AudioRoute {
             for delay in [0.4, 1.2, 2.5] {
                 DispatchQueue.main.asyncAfter(deadline: .now() + delay) { if current == route { apply(route) } }
             }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { if current == route { report() } }
         }
     }
 
@@ -49,11 +54,29 @@ enum AudioRoute {
         let speaker = route == "speaker"
         // Переключать динамик можно только в категории «запись и воспроизведение», которую ставит WebKit
         if s.category == .playAndRecord {
-            try? s.overrideOutputAudioPort(speaker ? .speaker : .none)
+            if !speaker && !kicked {
+                kicked = true
+                try? s.overrideOutputAudioPort(.speaker)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                    if current == "earpiece" { try? AVAudioSession.sharedInstance().overrideOutputAudioPort(.none) }
+                }
+            } else {
+                try? s.overrideOutputAudioPort(speaker ? .speaker : .none)
+            }
         }
         let headsetTypes: [AVAudioSession.Port] = [.headphones, .bluetoothHFP, .bluetoothA2DP, .bluetoothLE, .usbAudio, .carAudio]
         let headset = s.currentRoute.outputs.contains { headsetTypes.contains($0.portType) }
         UIDevice.current.isProximityMonitoringEnabled = !speaker && !headset
         UIApplication.shared.isIdleTimerDisabled = true
+    }
+
+    /// В журнал сервера: куда на самом деле идёт звук и откуда микрофон
+    private static func report() {
+        let s = AVAudioSession.sharedInstance()
+        let outs = s.currentRoute.outputs.map { $0.portType.rawValue }.joined(separator: ",")
+        let ins = s.currentRoute.inputs.map { $0.portType.rawValue }.joined(separator: ",")
+        let info = "ios выбор=\(current) категория=\(s.category.rawValue) режим=\(s.mode.rawValue) вывод=\(outs) микрофон=\(ins.isEmpty ? "нет" : ins)"
+            .replacingOccurrences(of: "'", with: "")
+        CallManager.shared.web?.evaluate("window.hxDiag && hxDiag('audio-route', '\(info)')")
     }
 }

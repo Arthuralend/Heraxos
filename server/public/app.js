@@ -811,13 +811,15 @@ const canRoute = !!(AND && AND.setAudioRoute);
 function setRoute(r) {
   if (!call) return; call.route = r;
   if (canRoute) try { AND.setAudioRoute(r); } catch {}
+  // как в WhatsApp: значок динамика всегда один; включена громкая связь — кнопка белая
   $('bSpeaker').classList.toggle('on', r === 'speaker');
-  $('bSpeaker').innerHTML = `<svg><use href="#${r === 'speaker' ? 'i-spk' : 'i-ear'}"/></svg>`;
-  $('bSpeaker').title = r === 'speaker' ? 'Громкая связь' : 'Разговорный динамик';
+  $('bSpeaker').innerHTML = '<svg><use href="#i-spk"/></svg>';
+  $('bSpeaker').title = r === 'speaker' ? 'Громкая связь включена' : 'Громкая связь выключена';
+  $('bSpeaker').setAttribute('aria-pressed', r === 'speaker');
 }
 function audioSessionCall() { try { if (navigator.audioSession) navigator.audioSession.type = 'play-and-record'; } catch {} }
 function audioSessionOff() { try { if (navigator.audioSession) navigator.audioSession.type = 'auto'; } catch {} }
-$('bSpeaker').onclick = () => { if (!call) return; call.routeManual = true; setRoute(call.route === 'speaker' ? 'earpiece' : 'speaker'); toast(call.route === 'speaker' ? 'Громкая связь' : 'Разговорный динамик', 1200); };
+$('bSpeaker').onclick = () => { if (!call) return; call.routeManual = true; setRoute(call.route === 'speaker' ? 'earpiece' : 'speaker'); toast(call.route === 'speaker' ? '🔊 Громкая связь' : '📱 Обычный режим (у уха)', 1200); };
 
 // ---------- участники ----------
 const K = (l) => String(l).toLowerCase();
@@ -847,6 +849,7 @@ function newPeer(login) {
     if (st === 'connected') {
       p.connected = true; p.lost = 0; clearTimeout(p.rt); p.rt = null;
       if (!call.t0) { call.t0 = Date.now(); startTimer(); }
+      if (call.route) setRoute(call.route); // разговор соединился — ещё раз выбираем динамик (Android/iPhone могли перебить)
       send({ type: 'media', id: call.id, video: localVideoOn() });
       applySenderParams(p);
     } else if (st === 'disconnected' || st === 'failed') {
@@ -1213,13 +1216,14 @@ async function logQuality() {
   if (!call) return;
   for (const p of call.peers.values()) {
     try {
-      const st = await p.pc.getStats(); let pair = null, aIn = null, vOut = null, vIn = null;
+      const st = await p.pc.getStats(); let pair = null, aIn = null, vOut = null, vIn = null, mic = null;
       st.forEach((r) => {
         if (r.type === 'transport' && r.selectedCandidatePairId) pair = st.get(r.selectedCandidatePairId);
         if (r.type === 'candidate-pair' && r.nominated && r.state === 'succeeded' && !pair) pair = r;
         if (r.type === 'inbound-rtp' && r.kind === 'audio') aIn = r;
         if (r.type === 'inbound-rtp' && r.kind === 'video') vIn = r;
         if (r.type === 'outbound-rtp' && r.kind === 'video') vOut = r;
+        if (r.type === 'media-source' && r.kind === 'audio') mic = r;
       });
       const lc = pair && st.get(pair.localCandidateId), rc = pair && st.get(pair.remoteCandidateId);
       const prev = qPrev.get(p.login) || {}, rec = aIn ? aIn.packetsReceived : 0, lost = aIn ? aIn.packetsLost : 0;
@@ -1229,6 +1233,7 @@ async function logQuality() {
       D('quality', [p.login, path,
         'rtt ' + (pair && pair.currentRoundTripTime != null ? Math.round(pair.currentRoundTripTime * 1000) + 'мс' : '?'),
         'звук: потери ' + (dRec + dLost > 0 ? (dLost / (dRec + dLost) * 100).toFixed(1) : '0') + '%, джиттер ' + (aIn && aIn.jitter != null ? Math.round(aIn.jitter * 1000) + 'мс' : '?'),
+        'уровень: микрофон ' + (mic && mic.audioLevel != null ? mic.audioLevel.toFixed(3) : '?') + ', от собеседника ' + (aIn && aIn.audioLevel != null ? aIn.audioLevel.toFixed(3) : '?') + ', маршрут ' + (call.route || '?'),
         vIn && vIn.frameHeight ? 'видео приём ' + vIn.frameHeight + 'p ' + Math.round(vIn.framesPerSecond || 0) + 'к/с' : '',
         vOut && vOut.frameHeight ? 'видео отправка ' + vOut.frameHeight + 'p' : '',
         pair && pair.availableOutgoingBitrate ? 'канал ' + Math.round(pair.availableOutgoingBitrate / 1000) + 'кбит/с' : ''].filter(Boolean).join(' · '));
