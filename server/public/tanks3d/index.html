@@ -150,6 +150,8 @@ body.embed .card{padding:22px 20px;border-radius:16px}
 body.embed .card h2{font-size:24px}
 body.embed.compact #hud{gap:10px;padding:8px 10px}
 body.embed .btns .btn{padding:7px 9px}
+body.embed #bExit{padding:7px 12px;font-size:15px;background:rgba(224,83,63,.22);border-color:rgba(224,83,63,.45)}
+body.embed.compact #hud{gap:8px}
 </style>
 </head>
 <body>
@@ -176,6 +178,7 @@ body.embed .btns .btn{padding:7px 9px}
     <button class="btn" id="bSnd"><span id="sndName">Звук: вкл</span><kbd>M</kbd></button>
     <button class="btn" id="bFmt"><span><span class="bl">Поле: </span><span id="fmtName">Классика</span></span><kbd>F</kbd></button>
     <button class="btn" id="bPause"><span>Пауза</span><kbd>P</kbd></button>
+    <button class="btn" id="bExit" style="display:none" title="Выйти из игры" aria-label="Выйти"><span>✕</span></button>
   </div>
   <div class="hint">Движение — WASD или стрелки<br>Огонь — Пробел</div>
 </aside>
@@ -352,9 +355,11 @@ if(isTouch) document.body.classList.add('touch');
 
 /* =================== renderer =================== */
 const stage=$('stage');
-const renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'});
-renderer.setPixelRatio(EMBED?Math.min(window.devicePixelRatio||1,1.75):1);
-renderer.shadowMap.enabled=true;
+// Android-телефоны часто слабее по графике: без сглаживания и теней, меньше пикселей — игра идёт плавно
+const LITE=EMBED&&/Android/i.test(navigator.userAgent);
+const renderer=new THREE.WebGLRenderer({antialias:!LITE,powerPreference:'high-performance'});
+renderer.setPixelRatio(EMBED?Math.min(window.devicePixelRatio||1,LITE?1.25:1.75):1);
+renderer.shadowMap.enabled=!LITE;
 renderer.shadowMap.type=THREE.PCFSoftShadowMap;
 renderer.outputEncoding=THREE.sRGBEncoding;
 renderer.toneMapping=THREE.ACESFilmicToneMapping;
@@ -1349,7 +1354,7 @@ function snapshot(){
   if(G.state==='intro')s.in=[$('introT1').textContent,$('introT2').textContent];
   if(G.state==='done')s.ss=G.stageScore;
   if(G.state==='over')s.lr=G.loseReason;
-  if(withGrid){const n=NW*NH;s.g=Array.from(G.grid.subarray(0,n)).join('');s.d=Array.from(G.bdmg.subarray(0,n)).join('');NET.gridDirty=false;NET.gridT=now;}
+  if(withGrid){const n=NW*NH;s.gr=Array.from(G.grid.subarray(0,n)).join('');s.dm=Array.from(G.bdmg.subarray(0,n)).join('');NET.gridDirty=false;NET.gridT=now;}
   return s;
 }
 function hostInput(m){
@@ -1361,7 +1366,10 @@ function hostInput(m){
 }
 function applySnap(s){
   const n=NW*NH;
-  if(s.g&&s.g.length===n&&s.d&&s.d.length===n){for(let i=0;i<n;i++){const v=+s.g[i],d=+s.d[i];if(G.grid[i]!==v||G.bdmg[i]!==d){G.grid[i]=v;G.bdmg[i]=d;refreshCell(i);}}NET.haveGrid=true;}
+  // время прихода снимка — сглаженное, чтобы неровная доставка не давала рывков
+  const now=performance.now();NET.at=NET.lastAt?Math.max(NET.lastAt+30,Math.min(now,NET.lastAt+140)):now;NET.lastAt=NET.at;
+  // поле — в gr/dm (ключ g занят номером игры при пересылке)
+  if(s.gr&&s.gr.length===n&&s.dm&&s.dm.length===n){for(let i=0;i<n;i++){const v=+s.gr[i],d=+s.dm[i];if(G.grid[i]!==v||G.bdmg[i]!==d){G.grid[i]=v;G.bdmg[i]=d;refreshCell(i);}}NET.haveGrid=true;}
   else if(!NET.haveGrid){netSend({k:'in',d:-1,f:0,needGrid:1});}
   G.stage=s.sg;G.score=s.sc;G.queueTotal=s.qt;G.queue=new Array(s.q).fill(0);G.freeze=s.fr;G.shovel=s.sh;
   s.pl.forEach((p,i)=>{const sl=G.pl[i];sl.active=!!p[0];sl.lives=p[1];if(sl.level!==p[2]){sl.level=p[2];if(sl.tank)applyPlayerLevel(sl.tank,false);}});
@@ -1371,8 +1379,8 @@ function applySnap(s){
   for(const a of s.t){
     const[id,kind,x,y,dir,ps,alive,hp,car,sh,stun,mov]=a;seen.add(id);
     let t=NET.byId.get(id);
-    if(!t){const slot=ps>=0?G.pl[ps]:null;t=createTank(kind,x,y,ps>=0,!!car,slot);if(slot)slot.tank=t;NET.byId.set(id,t);t.px=t.nx=x;t.py=t.ny=y;t.lerpT=1;t.angle=-dir*Math.PI/2;}
-    else{t.px=t.x;t.py=t.y;t.nx=x;t.ny=y;t.lerpT=0;}
+    if(!t){const slot=ps>=0?G.pl[ps]:null;t=createTank(kind,x,y,ps>=0,!!car,slot);if(slot)slot.tank=t;NET.byId.set(id,t);t.hist=[];t.angle=-dir*Math.PI/2;}
+    t.hist.push([NET.at,x,y]);if(t.hist.length>12)t.hist.shift();
     t.dir=dir;t.carrier=!!car;t.shield=sh;t.stun=stun?1:0;t.moving=!!mov;
     if(!t.isPlayer&&t.hp!==hp){t.hp=hp;if(kind==='armor')t.m.bodyMat.color.setHex(ARMOR_COLORS[Math.max(1,Math.min(4,hp))]);}
     if(alive&&t.state!=='alive'){t.state='alive';t.m.group.visible=true;if(t.fx){scene.remove(t.fx);t.fx=null;}}
@@ -1401,16 +1409,20 @@ function applySnap(s){
   updateHUD();
 }
 function guestTick(dt){
+  const rt=performance.now()-110; // показываем на 110 мс позже — всегда есть два снимка для плавного движения
   for(const t of NET.byId.values()){
-    if(t.nx===undefined)continue;
-    t.lerpT=Math.min(1,(t.lerpT||0)+dt/.075);
-    const ox=t.x,oy=t.y;t.x=t.px+(t.nx-t.px)*t.lerpT;t.y=t.py+(t.ny-t.py)*t.lerpT;t.tread+=Math.abs(t.x-ox)+Math.abs(t.y-oy);
+    const h=t.hist;if(!h||!h.length)continue;
+    let x=h[h.length-1][1],y=h[h.length-1][2];
+    for(let i=h.length-1;i>0;i--){const a=h[i-1],b=h[i];if(a[0]<=rt&&rt<=b[0]){const k=(rt-a[0])/Math.max(1,b[0]-a[0]);x=a[1]+(b[1]-a[1])*k;y=a[2]+(b[2]-a[2])*k;break;}
+      if(i===1&&rt<a[0]){x=a[1];y=a[2];}}
+    const ox=t.x,oy=t.y;t.x=x;t.y=y;t.tread+=Math.abs(t.x-ox)+Math.abs(t.y-oy);
   }
   for(const b of G.bullets){b.x+=DX[b.dir]*(b.speed||13)*dt;b.y+=DY[b.dir]*(b.speed||13)*dt;}
   if(G.bonus)G.bonus.t-=dt;
   const d=absDir(0),f=INP[0].fire?1:0,key=d+'|'+f,now=performance.now();
   if(key!==NET.lastIn||now-NET.lastInT>250){NET.lastIn=key;NET.lastInT=now;netSend({k:'in',d,f});}
 }
+if(EMBED){const bx=$('bExit');bx.style.display='';bx.addEventListener('click',e=>{e.currentTarget.blur();parentPost({t:'leave'});});}
 function netBoot(){
   addEventListener('message',e=>{
     if(e.origin!==location.origin)return;const m=e.data||{};
@@ -1441,11 +1453,11 @@ if(EMBED)netBoot();else showMenu();
 let last=performance.now(),acc=0,padTick=0;const STEP=1/60;
 function frame(now){
   requestAnimationFrame(frame);
-  const dt=Math.min(.1,(now-last)/1000);last=now;
+  const dt=Math.min(.2,(now-last)/1000);last=now;
   pollPads();if(G.state==='menu'&&(padTick+=dt)>1){padTick=0;refreshPadStatus();}
   if(G.state!=='paused'){
     if(NET.role==='guest')guestTick(dt);
-    else{acc+=dt;let n=0;while(acc>=STEP&&n<6){update(STEP);acc-=STEP;n++;}if(n>=6)acc=0;}
+    else{acc+=dt;let n=0;while(acc>=STEP&&n<12){update(STEP);acc-=STEP;n++;}if(n>=12)acc=0;}
     updateVisuals(dt);
   }
   if(NET.role==='host'&&now-NET.snapT>66){NET.snapT=now;netSend(snapshot());}
