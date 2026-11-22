@@ -15,6 +15,14 @@ const _qs = new URLSearchParams(location.search);
 let autoAnswer = _qs.get('answer') ? { id: _qs.get('call'), video: _qs.get('answer') === 'video' } : null;
 window.hxAnswer = (id, video) => { if (call && call.id === id && call.dir === 'ring') accept(!!video); else autoAnswer = { id, video: !!video }; };
 window.hxHangup = () => { if (call) endCall(true); };
+// iPhone: системный экран звонка (CallKit) — отклонить / VoIP-токен для звонков при закрытом приложении
+const isIOSApp = window.HeraxosPlatform === 'ios';
+let voipToken = null, serverVoip = false;
+window.hxDecline = (id) => { if (call && call.id === id && call.dir === 'ring') { send({ type: 'reject', id }); call.dir = 'declined'; endCall(false); } };
+window.hxSetVoip = (t) => {
+  if (!/^[0-9a-f]{32,200}$/.test(String(t || ''))) return;
+  voipToken = t; if (token) api('/api/voip', { token: t }).then((j) => { serverVoip = !!j.voip; }).catch(() => {});
+};
 window.hxBack = () => { if ($('viewer').classList.contains('on')) { closeViewer(); return true; } if ($('info').classList.contains('on')) { $('info').classList.remove('on'); return true; } if (call) return true; if ($('qMenu').classList.contains('on')) { $('qMenu').classList.remove('on'); return true; } if (cur && !matchMedia('(min-width:800px)').matches) { closeChat(); return true; } return false; };
 
 // ---------- номера и имена ----------
@@ -116,6 +124,8 @@ document.querySelectorAll('.eye').forEach((b) => (b.onclick = () => {
   else ['rPass', 'rPass2'].forEach((id) => $(id).classList.toggle('shown', show));
 }));
 function logout(silent) {
+  // выходим — этот iPhone больше не должен звонить для этого аккаунта
+  if (!silent && voipToken) api('/api/voip/remove', { token: voipToken }).catch(() => {});
   if (!silent) api('/api/logout', {}).catch(() => {});
   if (me) localStorage.removeItem('hx_k_' + me);
   if (AND) try { AND.clearSession(); } catch {}
@@ -132,7 +142,8 @@ async function start() {
   if (AND) try { AND.setSession(token, me); } catch {}
   $('auth').classList.remove('on'); $('app').classList.add('on');
   $('meName').textContent = me; avatar($('meAva'), me); showMyNum(localStorage.getItem('hx_num'));
-  api('/api/me').then((j) => { if (j.num) { localStorage.setItem('hx_num', j.num); showMyNum(j.num); } }).catch(() => {});
+  api('/api/me').then((j) => { serverVoip = !!j.voip; if (j.num) { localStorage.setItem('hx_num', j.num); showMyNum(j.num); } }).catch(() => {});
+  if (voipToken) window.hxSetVoip(voipToken);
   // с версии 6 по умолчанию 1080p (снижается автоматически только при слабом интернете)
   if (localStorage.getItem('hx_q_v') !== '2') { localStorage.setItem('hx_q', 'hd'); localStorage.setItem('hx_q_v', '2'); }
   $('defQuality').value = localStorage.getItem('hx_q') || 'hd';
@@ -1251,6 +1262,8 @@ function ring(on) {
   clearCallNotes(); clearTimeout(ringTimer);
   const a = $('ring');
   if (on && AND && document.hidden) { a.pause(); return; }
+  // iPhone с CallKit: звонит системный экран звонка, страница молчит (иначе два рингтона)
+  if (on && isIOSApp && serverVoip && voipToken) { a.pause(); return; }
   if (on) {
     a.currentTime = 0; a.play().catch(() => {}); navigator.vibrate && navigator.vibrate([800, 400, 800, 400, 800, 400, 800, 400, 800]);
     try { AND && AND.pageRinging && call && call.id && AND.pageRinging(call.id); } catch {}

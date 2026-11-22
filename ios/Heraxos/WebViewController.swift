@@ -26,10 +26,10 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         let shim = """
         window.HeraxosPlatform = 'ios';
         window.HeraxosAndroid = {
-          setSession: function(t, l) { window.webkit.messageHandlers.hx.postMessage({a: 'session', l: String(l)}); },
+          setSession: function(t, l) { window.webkit.messageHandlers.hx.postMessage({a: 'session', l: String(l), t: String(t)}); },
           clearSession: function() { window.webkit.messageHandlers.hx.postMessage({a: 'clear'}); },
           setAudioRoute: function(r) { window.webkit.messageHandlers.hx.postMessage({a: 'route', r: String(r)}); },
-          callState: function(on, v, id) { window.webkit.messageHandlers.hx.postMessage({a: 'call', on: !!on}); },
+          callState: function(on, v, id) { window.webkit.messageHandlers.hx.postMessage({a: 'call', on: !!on, id: String(id || '')}); },
           setBars: function(dark) { window.webkit.messageHandlers.hx.postMessage({a: 'bars', dark: !!dark}); },
           fileBegin: function(sid, name, type) { window.webkit.messageHandlers.hx.postMessage({a: 'fileBegin', sid: String(sid), name: String(name)}); },
           fileChunk: function(sid, b64) { window.webkit.messageHandlers.hx.postMessage({a: 'fileChunk', sid: String(sid), b64: String(b64)}); },
@@ -54,8 +54,31 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        CallManager.shared.web = self
         web.load(URLRequest(url: SERVER))
     }
+
+    // ---- звонки с системного экрана (CallKit) ----
+    func evaluate(_ js: String) { web.evaluateJavaScript(js, completionHandler: nil) }
+
+    /// Ответили на системном экране: если интерфейс уже загружен — отвечаем в нём, иначе открываем сразу на ответ
+    func answerCall(id: String, video: Bool) {
+        let safe = id.filter { $0.isHexDigit }
+        web.evaluateJavaScript("window.hxAnswer ? (hxAnswer('\(safe)', \(video)), 1) : 0") { [weak self] r, _ in
+            guard let self else { return }
+            if (r as? Int) != 1, let url = URL(string: "?answer=\(video ? "video" : "audio")&call=\(safe)", relativeTo: SERVER) {
+                self.web.load(URLRequest(url: url))
+            }
+        }
+    }
+
+    /// VoIP-токен этого iPhone — интерфейс отправит его на сервер после входа
+    func sendVoipToken() {
+        guard let t = CallManager.shared.voipToken else { return }
+        evaluate("window.hxSetVoip && hxSetVoip('\(t)')")
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { sendVoipToken() }
 
     // Микрофон и камера для нашего сервера — без лишних вопросов (системный запрос iOS показывает один раз)
     @available(iOS 15.0, *)
@@ -98,7 +121,10 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         guard let d = message.body as? [String: Any], let a = d["a"] as? String else { return }
         switch a {
         case "route": AudioRoute.set(d["r"] as? String ?? "off")
-        case "call": AudioRoute.keepAlive(d["on"] as? Bool ?? false)
+        case "call":
+            let on = d["on"] as? Bool ?? false
+            AudioRoute.keepAlive(on)
+            CallManager.shared.pageCall(on: on, id: d["id"] as? String ?? "")
         case "bars":
             darkBars = d["dark"] as? Bool ?? false
             setNeedsStatusBarAppearanceUpdate()
@@ -108,8 +134,13 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
                 s.handle.write(data)
             }
         case "fileEnd": fileEnd(d["sid"] as? String ?? "")
-        case "session": UserDefaults.standard.set(d["l"] as? String, forKey: "login")
-        case "clear": UserDefaults.standard.removeObject(forKey: "login")
+        case "session":
+            UserDefaults.standard.set(d["l"] as? String, forKey: "login")
+            UserDefaults.standard.set(d["t"] as? String, forKey: "token")
+            sendVoipToken()
+        case "clear":
+            UserDefaults.standard.removeObject(forKey: "login")
+            UserDefaults.standard.removeObject(forKey: "token")
         default: break
         }
     }

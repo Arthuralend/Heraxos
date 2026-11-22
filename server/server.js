@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 const http = require('http');
+const http2 = require('http2');
 const crypto = require('crypto');
 const express = require('express');
 const bcrypt = require('bcryptjs');
@@ -146,7 +147,70 @@ app.post('/api/login', async (req, res) => {
 });
 
 app.post('/api/logout', auth, (req, res) => { delete db.tokens[tokenOf(req)]; save(); res.json({ ok: true }); });
-app.get('/api/me', auth, (req, res) => res.json({ login: name(req.me), num: db.users[req.me].num, hasKeys: !!db.users[req.me].pub }));
+app.get('/api/me', auth, (req, res) => res.json({ login: name(req.me), num: db.users[req.me].num, hasKeys: !!db.users[req.me].pub, voip: !!apnsKey }));
+
+// ---------- iPhone: звонки как в WhatsApp (PushKit/CallKit через Apple Push Notification service) ----------
+// В .env: APNS_KEY_FILE=/opt/ahazang/apns.p8, APNS_KEY_ID=…, APNS_TEAM_ID=…, (APNS_TOPIC=am.ahazang.app)
+const APNS = { file: process.env.APNS_KEY_FILE, kid: process.env.APNS_KEY_ID, team: process.env.APNS_TEAM_ID,
+  topic: process.env.APNS_TOPIC || 'am.ahazang.app', host: process.env.APNS_HOST || 'api.push.apple.com' };
+let apnsKey = null;
+try { if (APNS.file && APNS.kid && APNS.team) { apnsKey = crypto.createPrivateKey(fs.readFileSync(APNS.file)); console.log('[apns] включено, ключ', APNS.kid); } }
+catch (e) { console.log('[apns] ключ не загружен:', e.message); }
+let apnsJwt = '', apnsJwtAt = 0, apnsSession = null;
+function apnsAuth() {
+  if (apnsJwt && Date.now() - apnsJwtAt < 40 * 60e3) return apnsJwt;
+  const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  const data = b64({ alg: 'ES256', kid: APNS.kid }) + '.' + b64({ iss: APNS.team, iat: Math.floor(Date.now() / 1000) });
+  apnsJwt = data + '.' + crypto.sign('sha256', Buffer.from(data), { key: apnsKey, dsaEncoding: 'ieee-p1363' }).toString('base64url');
+  apnsJwtAt = Date.now(); return apnsJwt;
+}
+function apnsClient() {
+  if (apnsSession && !apnsSession.closed && !apnsSession.destroyed) return apnsSession;
+  apnsSession = http2.connect('https://' + APNS.host);
+  apnsSession.on('error', (e) => { console.log('[apns] соединение:', e.message); apnsSession = null; });
+  apnsSession.on('goaway', () => { apnsSession = null; });
+  apnsSession.on('close', () => { apnsSession = null; });
+  return apnsSession;
+}
+// VoIP-сигнал на все iPhone пользователя: iOS будит приложение и показывает системный входящий (CallKit)
+function sendVoip(login, payload) {
+  const u = db.users[login]; if (!apnsKey || !u || !u.voip || !u.voip.length) return;
+  for (const t of u.voip.slice()) {
+    let req;
+    try {
+      req = apnsClient().request({ ':method': 'POST', ':path': '/3/device/' + t, authorization: 'bearer ' + apnsAuth(),
+        'apns-topic': APNS.topic + '.voip', 'apns-push-type': 'voip', 'apns-priority': '10', 'apns-expiration': '0', 'content-type': 'application/json' });
+    } catch (e) { console.log('[apns]', e.message); apnsSession = null; continue; }
+    let status = 0, body = '';
+    req.on('response', (h) => { status = h[':status']; });
+    req.setEncoding('utf8'); req.on('data', (c) => (body += c));
+    req.on('end', () => {
+      if (status === 200) return;
+      console.log('[apns]', login, status, body);
+      if (status === 410 || /BadDeviceToken|Unregistered|DeviceTokenNotForTopic/.test(body)) { u.voip = (u.voip || []).filter((x) => x !== t); save(); }
+    });
+    req.on('error', (e) => console.log('[apns] запрос:', e.message));
+    req.end(JSON.stringify(payload));
+  }
+}
+// Приложение для iPhone регистрирует свой VoIP-токен (один iPhone — один пользователь)
+app.post('/api/voip', auth, (req, res) => {
+  const t = String((req.body && req.body.token) || '').toLowerCase();
+  if (!/^[0-9a-f]{32,200}$/.test(t)) return res.status(400).json({ error: 'bad token' });
+  for (const [k, U] of Object.entries(db.users)) if (k !== req.me && U.voip) U.voip = U.voip.filter((x) => x !== t);
+  const u = db.users[req.me]; u.voip = [t, ...(u.voip || []).filter((x) => x !== t)].slice(0, 5); save();
+  res.json({ ok: true, voip: !!apnsKey });
+});
+app.post('/api/voip/remove', auth, (req, res) => {
+  const t = String((req.body && req.body.token) || '').toLowerCase(), u = db.users[req.me];
+  if (u.voip) u.voip = u.voip.filter((x) => x !== t); save(); res.json({ ok: true });
+});
+// Состояние вызова для системного экрана звонка iPhone (пока звонит — проверяет, не сбросили ли) и отклонение без открытия приложения
+app.get('/api/call/:id', auth, (req, res) => {
+  const r = rooms.get(String(req.params.id));
+  res.json({ ringing: !!(r && r.invited.has(req.me)), active: !!(r && r.members.has(req.me)) });
+});
+app.post('/api/call/:id/reject', auth, (req, res) => { rejectInvite(req.me, String(req.params.id), 'rejected', null); res.json({ ok: true }); });
 // Сменить свой номер на свободный 6-значный
 app.post('/api/number', auth, (req, res) => {
   if (limited('n' + req.me, 5)) return res.status(429).json({ error: 'Слишком много попыток, подождите минуту' });
@@ -468,11 +532,20 @@ function stopRinging(id, to, missed) {
   if (missed) pushTo(to, { kind: 'missed', id, from: name(r.from), title: 'Пропущенный звонок', body: 'от ' + name(r.from) });
 }
 
+function rejectInvite(me, id, reason, exceptWs) {
+  const r = rooms.get(id); if (!r || !r.invited.has(me)) return;
+  dropInvite(id, r, me, false);
+  for (const w of online.get(me) || []) if (w !== exceptWs && w.readyState === 1) w.send(JSON.stringify({ type: 'hangup', id, reason: 'elsewhere' }));
+  roomSend(r, { type: 'declined', id, login: name(me), reason });
+  r.reason = reason;
+  maybeEnd(id);
+}
 function inviteInto(id, r, from, to, video) {
   const inv = { from };
   r.invited.set(to, inv);
   pending.set(to, { id, from, video, ts: Date.now() });
   sendTo(to, { type: 'invite', id, from: name(from), fromName: dispFor(to, from), fromNum: db.users[from].num, video, members: [...r.members].map(name) });
+  sendVoip(to, { type: 'call', id, from: name(from), name: dispFor(to, from), num: db.users[from].num, video: !!video });
   roomSend(r, { type: 'ringing', id, login: name(to) });
   startRinging(id, from, to, video);
   inv.timer = setTimeout(() => {
@@ -586,15 +659,7 @@ wss.on('connection', (ws, req) => {
         for (const w of online.get(me) || []) if (w !== ws) w.send(JSON.stringify({ type: 'hangup', id, reason: 'elsewhere' }));
         break;
       }
-      case 'reject': {
-        const id = String(m.id), r = rooms.get(id); if (!r || !r.invited.has(me)) return;
-        dropInvite(id, r, me, false);
-        for (const w of online.get(me) || []) if (w !== ws) w.send(JSON.stringify({ type: 'hangup', id, reason: 'elsewhere' }));
-        roomSend(r, { type: 'declined', id, login: name(me), reason: m.reason === 'busy' ? 'busy' : 'rejected' });
-        r.reason = m.reason === 'busy' ? 'busy' : 'rejected';
-        maybeEnd(id);
-        break;
-      }
+      case 'reject': rejectInvite(me, String(m.id), m.reason === 'busy' ? 'busy' : 'rejected', ws); break;
       case 'hangup': leaveRoom(String(m.id), me); break;
       case 'offer': case 'answer': case 'ice': case 'reneg': {
         const r = rooms.get(String(m.id)); if (!r || !r.members.has(me) || !r.members.has(to)) return;
