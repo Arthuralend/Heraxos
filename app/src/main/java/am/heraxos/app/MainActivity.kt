@@ -64,6 +64,10 @@ class MainActivity : Activity() {
     private var pendingCall: Triple<String, String, Boolean>? = null
     private var fileCallback: ValueCallback<Array<Uri>>? = null
     private val serverHost: String by lazy { Uri.parse(BuildConfig.SERVER).host ?: "" }
+    private var callBar: android.widget.TextView? = null
+    private val barTick = object : Runnable {
+        override fun run() { updateCallBar(); root.postDelayed(this, 1000) }
+    }
     private var insetTop = 0
     private var insetBottom = 0
 
@@ -231,11 +235,40 @@ class MainActivity : Activity() {
         super.onResume()
         visible = true
         web.onResume()
+        root.removeCallbacks(barTick); root.post(barTick)
         CallService.instance?.clearMessageNotes()
         if (Prefs.token(this) != null) askSystemSettingsOnce()
     }
 
+    /** Идёт звонок, а вы в чатах — зелёная плашка сверху возвращает к экрану звонка */
+    private fun updateCallBar() {
+        val e = CallEngine
+        val show = e.busy && e.state != CallEngine.State.RINGING && !CallActivity.visible
+        if (!show) { callBar?.visibility = View.GONE; return }
+        val b = callBar ?: android.widget.TextView(this).apply {
+            setTextColor(Color.WHITE); textSize = 15f; typeface = android.graphics.Typeface.DEFAULT_BOLD
+            gravity = android.view.Gravity.CENTER
+            background = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = 18 * resources.displayMetrics.density; setColor(0xFF4F9A62.toInt())
+            }
+            val d = resources.displayMetrics.density
+            setPadding((18 * d).toInt(), 0, (18 * d).toInt(), 0)
+            elevation = 8 * d
+            setOnClickListener { CallEngine.openScreen() }
+            root.addView(this, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, (36 * d).toInt(),
+                android.view.Gravity.TOP or android.view.Gravity.CENTER_HORIZONTAL))
+            callBar = this
+        }
+        (b.layoutParams as FrameLayout.LayoutParams).topMargin = insetTop + (4 * resources.displayMetrics.density).toInt()
+        var t = "📞 Вернуться к звонку"
+        if (e.t0 > 0) { val s = ((System.currentTimeMillis() - e.t0) / 1000).toInt(); t += " · %d:%02d".format(s / 60, s % 60) }
+        b.text = t
+        b.visibility = View.VISIBLE
+        b.requestLayout()
+    }
+
     override fun onPause() {
+        root.removeCallbacks(barTick)
         visible = false
         super.onPause()
     }
