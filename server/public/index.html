@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-title" content="Ahazang">
 <meta name="theme-color" content="#faf9f5">
 <meta name="color-scheme" content="light">
-<link rel="stylesheet" href="/style.css?v=9">
+<link rel="stylesheet" href="/style.css?v=10">
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute">
@@ -48,7 +48,7 @@
     <div class="seg"><button id="tLogin" class="on">Вход</button><button id="tReg">Регистрация</button></div>
 
     <form id="fLogin" autocomplete="on" onsubmit="return false">
-      <input id="login" name="username" placeholder="Логин" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="username">
+      <input id="login" name="username" placeholder="Логин или номер" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="username">
       <div class="pw"><input id="pass" name="password" type="password" placeholder="Пароль" autocomplete="current-password"><button type="button" class="eye" data-for="pass">👁</button></div>
       <button class="btn" id="bLogin" type="submit">Войти</button>
     </form>
@@ -57,6 +57,7 @@
       <input id="rLogin" placeholder="Придумайте логин" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="off" data-lpignore="true">
       <div class="pw"><input id="rPass" type="text" class="secret" placeholder="Придумайте пароль (от 6 символов)" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="off" data-lpignore="true"><button type="button" class="eye" data-for="rPass">👁</button></div>
       <div class="pw"><input id="rPass2" type="text" class="secret" placeholder="Повторите пароль" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="off" data-lpignore="true"></div>
+      <input id="rNum" placeholder="Желаемый номер — 6 цифр (необязательно)" inputmode="numeric" maxlength="7" autocomplete="off">
       <label class="terms"><input type="checkbox" id="rTerms"> <span>Я принимаю <a href="#" data-doc="terms">условия использования</a> и <a href="#" data-doc="privacy">политику конфиденциальности</a></span></label>
       <button class="btn" id="bReg" type="submit">Создать аккаунт</button>
       <p class="mute small">Запомните пароль: он защищает ключ шифрования ваших сообщений.</p>
@@ -83,7 +84,8 @@
     <div class="tab-page" data-tab="contacts">
       <header class="bighead"><h2>Контакты</h2></header>
       <form class="addbar" id="fAdd" autocomplete="off" onsubmit="return false">
-        <input id="addLogin" placeholder="Точный логин нового контакта" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="off">
+        <input id="addNum" placeholder="Номер" inputmode="numeric" autocomplete="off" maxlength="14">
+        <input id="addName" placeholder="Имя" autocomplete="off" maxlength="40">
         <button class="addbtn" type="submit">Добавить</button>
       </form>
       <div class="list" id="userList"></div>
@@ -91,7 +93,7 @@
     <div class="tab-page" data-tab="settings">
       <header class="bighead"><h2>Настройки</h2></header>
       <div class="list">
-        <div class="me-card"><div class="ava big" id="meAva"></div><div><b id="meName"></b><div class="mute" id="connState">подключение…</div></div></div>
+        <div class="me-card"><div class="ava big" id="meAva"></div><div><b id="meName"></b><div class="mynum" id="meNum"></div><div class="mute" id="connState">подключение…</div></div></div>
         <div class="group">
           <div class="item" id="bPush"><span>🔔</span><div>Уведомления о звонках и сообщениях<small id="pushState"></small></div></div>
           <div class="item"><span>🎥</span><div>Качество видео по умолчанию<small>Это максимум: при слабом интернете качество снижается само и возвращается, когда скорость растёт.<select id="defQuality"><option value="hd">1080p — авто (рекомендуется)</option><option value="high">720p</option><option value="medium">540p</option><option value="low">360p (экономия трафика)</option></select></small></div></div>
@@ -101,6 +103,9 @@
         <div class="group">
           <div class="item" id="updRow" style="display:none"><span>⬆️</span><div>Обновление приложения<small id="updState">Проверяем…</small></div></div>
           <div class="item" id="bWhatsNew"><span>✨</span><div>Что нового<small>Изменения в последней версии</small></div></div>
+        </div>
+        <div class="group">
+          <div class="item" id="bMyNum"><span>☎️</span><div>Мой номер<small id="myNumState">—</small></div></div>
         </div>
         <div class="group">
           <div class="item" id="bBlocked"><span>🚫</span><div>Заблокированные<small id="blockedState">Никого</small></div></div>
@@ -208,7 +213,7 @@
   addEventListener('unhandledrejection', function (e) { var r = e.reason; d('reject', r && (r.stack || r.message) || r); });
 })();
 </script>
-<script src="/crypto.js?v=9"></script>
-<script src="/app.js?v=9"></script>
+<script src="/crypto.js?v=10"></script>
+<script src="/app.js?v=10"></script>
 </body>
 </html>
