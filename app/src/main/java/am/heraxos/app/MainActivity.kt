@@ -66,7 +66,73 @@ class MainActivity : Activity() {
     private val serverHost: String by lazy { Uri.parse(BuildConfig.SERVER).host ?: "" }
     private var callBar: android.widget.TextView? = null
     private val barTick = object : Runnable {
-        override fun run() { updateCallBar(); root.postDelayed(this, 1000) }
+        override fun run() { updateCallBar(); updateVideoOverlay(); pushCallState(); root.postDelayed(this, 500) }
+    }
+
+    // ---------- видео звонка поверх игр ----------
+    private var slotJson = ""
+    private var lastCallState = ""
+    private var pendingGames: String? = null
+    private class VView(val v: org.webrtc.SurfaceViewRenderer, var track: org.webrtc.VideoTrack?)
+    private val vviews = HashMap<String, VView>()
+
+    /** Состояние звонка → интерфейсу (игры показывают окна видео и кнопку камеры) */
+    private fun pushCallState() {
+        val e = CallEngine
+        val active = e.busy && e.state != CallEngine.State.RINGING
+        val p = e.peers.values.firstOrNull()
+        val st = org.json.JSONObject().put("active", active).put("peer", if (active) e.peerLogin else "")
+            .put("camOn", active && e.camOn).put("remoteVideo", active && p?.video == true && p.remoteVideo != null).toString()
+        if (st != lastCallState) { lastCallState = st; web.evaluateJavascript("window.hxCallState && hxCallState($st)", null) }
+    }
+
+    private fun updateVideoOverlay() {
+        val e = CallEngine
+        val active = visible && e.busy && e.state != CallEngine.State.RINGING && !CallActivity.visible && e.egl != null
+        val slots = if (slotJson.isEmpty()) null else runCatching { org.json.JSONObject(slotJson) }.getOrNull()
+        val p = e.peers.values.firstOrNull()
+        val remote = if (active && p?.video == true) p.remoteVideo else null
+        val local = if (active && slots != null) e.localVideo else null
+        val d = resources.displayMetrics.density
+        var rr = slots?.optJSONObject("remote")
+        if (rr == null && remote != null && slots == null) { // обычная «картинка в картинке» в углу
+            val w = root.width / d
+            rr = org.json.JSONObject().put("x", w - 116).put("y", insetTop / d + 48).put("w", 104).put("h", 150)
+        }
+        place("remote", remote, rr, d, false)
+        place("local", local, slots?.optJSONObject("local"), d, e.front)
+    }
+
+    private fun place(key: String, track: org.webrtc.VideoTrack?, r: org.json.JSONObject?, d: Float, mirror: Boolean) {
+        val cur = vviews[key]
+        if (track == null || r == null || r.optDouble("w") < 8) {
+            if (cur != null) { cur.track?.let { runCatching { it.removeSink(cur.v) } }; root.removeView(cur.v); cur.v.release(); vviews.remove(key) }
+            return
+        }
+        val vv = cur ?: VView(org.webrtc.SurfaceViewRenderer(this).apply {
+            init(CallEngine.egl!!.eglBaseContext, null)
+            setZOrderMediaOverlay(true)
+            setScalingType(org.webrtc.RendererCommon.ScalingType.SCALE_ASPECT_FILL)
+            setOnClickListener { CallEngine.openScreen() }
+        }, null).also { vviews[key] = it; root.addView(it.v) }
+        if (vv.track !== track) { vv.track?.let { runCatching { it.removeSink(vv.v) } }; track.addSink(vv.v); vv.track = track }
+        vv.v.setMirror(mirror)
+        val lp = FrameLayout.LayoutParams((r.optDouble("w") * d).toInt(), (r.optDouble("h") * d).toInt())
+        lp.leftMargin = (r.optDouble("x") * d).toInt(); lp.topMargin = (r.optDouble("y") * d).toInt()
+        val old = vv.v.layoutParams as? FrameLayout.LayoutParams
+        if (old == null || old.width != lp.width || old.height != lp.height || old.leftMargin != lp.leftMargin || old.topMargin != lp.topMargin) vv.v.layoutParams = lp
+    }
+
+    private fun openGamesFromIntent(i: Intent?) {
+        val peer = i?.getStringExtra("games") ?: return
+        i.removeExtra("games")
+        pendingGames = peer
+        runGames()
+    }
+    private fun runGames() {
+        val peer = pendingGames ?: return
+        val safe = peer.replace(Regex("[^A-Za-z0-9_.-]"), "")
+        web.evaluateJavascript("window.hxOpenGames ? (hxOpenGames('$safe'), 1) : 0") { r -> if (r == "1") pendingGames = null }
     }
     private var insetTop = 0
     private var insetBottom = 0
@@ -102,7 +168,10 @@ class MainActivity : Activity() {
                 runCatching { startActivity(Intent(Intent.ACTION_VIEW, u)) }
                 return true
             }
-            override fun onPageFinished(view: WebView, url: String) { pushInsets() }
+            override fun onPageFinished(view: WebView, url: String) {
+                pushInsets(); lastCallState = ""
+                if (pendingGames != null) view.postDelayed({ runGames() }, 1500)
+            }
         }
 
         web.webChromeClient = object : WebChromeClient() {
@@ -142,6 +211,7 @@ class MainActivity : Activity() {
 
         handleAnswer(intent)
         web.loadUrl(urlFor(intent))
+        openGamesFromIntent(intent)
     }
 
     // ---------- экран от края до края: отступы под строку состояния и панель навигации передаём в интерфейс ----------
@@ -220,6 +290,7 @@ class MainActivity : Activity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleAnswer(intent)
+        openGamesFromIntent(intent)
         val id = intent.getStringExtra("answerCall")
         val chat = intent.getStringExtra("chat")
         when {
@@ -243,7 +314,7 @@ class MainActivity : Activity() {
     /** Идёт звонок, а вы в чатах — зелёная плашка сверху возвращает к экрану звонка */
     private fun updateCallBar() {
         val e = CallEngine
-        val show = e.busy && e.state != CallEngine.State.RINGING && !CallActivity.visible
+        val show = e.busy && e.state != CallEngine.State.RINGING && !CallActivity.visible && slotJson.isEmpty() // в игре видео и так над доской
         if (!show) { callBar?.visibility = View.GONE; return }
         val b = callBar ?: android.widget.TextView(this).apply {
             setTextColor(Color.WHITE); textSize = 15f; typeface = android.graphics.Typeface.DEFAULT_BOLD
@@ -270,6 +341,7 @@ class MainActivity : Activity() {
     override fun onPause() {
         root.removeCallbacks(barTick)
         visible = false
+        updateVideoOverlay()
         super.onPause()
     }
 
@@ -305,6 +377,7 @@ class MainActivity : Activity() {
             else Toast.makeText(this, "Без доступа к микрофону звонить нельзя", Toast.LENGTH_LONG).show()
             return
         }
+        if (requestCode == 6 && has(Manifest.permission.CAMERA)) { CallEngine.gameCamera(true); return }
         if (requestCode == 2) {
             val req = pendingPermission ?: return
             pendingPermission = null
@@ -457,6 +530,31 @@ class MainActivity : Activity() {
         @JavascriptInterface
         fun takeCallLog(): String = CallEngine.takeCallLog(this@MainActivity)
 
+        // ---- игры во время звонка ----
+        /** Где в игре окна видео: {"peer","remote":{x,y,w,h},"local":{…}} в точках страницы; "" — убрать */
+        @JavascriptInterface
+        fun setVideoSlots(json: String) { runOnUiThread { slotJson = json; updateVideoOverlay() } }
+
+        @JavascriptInterface
+        fun gameCamera(on: Boolean) {
+            runOnUiThread {
+                if (on && !has(Manifest.permission.CAMERA)) { requestPermissions(arrayOf(Manifest.permission.CAMERA), 6); return@runOnUiThread }
+                CallEngine.gameCamera(on)
+            }
+        }
+
+        /** Видеозвонок из игры: без экрана звонка — видео сразу над доской */
+        @JavascriptInterface
+        fun startCallStay(login: String, title: String, video: Boolean) {
+            runOnUiThread {
+                val need = mutableListOf<String>()
+                if (!has(Manifest.permission.RECORD_AUDIO)) need += Manifest.permission.RECORD_AUDIO
+                if (video && !has(Manifest.permission.CAMERA)) need += Manifest.permission.CAMERA
+                if (need.isNotEmpty()) { requestPermissions(need.toTypedArray(), 7); return@runOnUiThread }
+                CallEngine.startCall(this@MainActivity, login, title, video, stay = true)
+            }
+        }
+
         /** Сохранение файла частями: fileBegin → fileChunk (base64) … → fileEnd */
         @JavascriptInterface
         fun fileBegin(sid: String, name: String, mime: String): Boolean = runCatching { startSave(sid, name, mime) }.getOrDefault(false)
@@ -486,6 +584,8 @@ class MainActivity : Activity() {
             CallService.setCall(applicationContext, false, false, "")
         }
         if (!CallEngine.busy) AudioRoute.set(this, "off")
+        for ((_, vv) in vviews) { vv.track?.let { runCatching { it.removeSink(vv.v) } }; runCatching { vv.v.release() } }
+        vviews.clear()
         for (j in saves.values) runCatching { j.out.close() }
         saves.clear()
         (web.parent as? ViewGroup)?.removeView(web)

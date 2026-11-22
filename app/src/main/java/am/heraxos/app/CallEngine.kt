@@ -218,9 +218,10 @@ object CallEngine {
     // =====================================================================
     // Действия пользователя
     // =====================================================================
-    fun startCall(c: Context, login: String, name: String, video: Boolean) {
+    /** stay — звонок из игры: экран звонка не открываем, видео покажется прямо над доской */
+    fun startCall(c: Context, login: String, name: String, video: Boolean, stay: Boolean = false) {
         init(c)
-        if (busy) { openScreen(); return }
+        if (busy) { if (!stay) openScreen(); return }
         if (!hasMic()) { toast("Нет доступа к микрофону"); return }
         reset()
         dir = "out"; state = State.OUTGOING; firstLogin = login; video0 = video
@@ -228,7 +229,7 @@ object CallEngine {
         status = "Вызов…"
         addPending(login)
         CallService.start(app)
-        openScreen()
+        if (!stay) openScreen()
         withIce {
             if (state != State.OUTGOING) return@withIce
             startMedia(video)
@@ -295,6 +296,17 @@ object CallEngine {
         CallService.setCall(app, true, camOn, id ?: "")
         notifyUi()
     }
+
+    /** Камера из игры: только фронтальная — чтобы видеть лицо соперника и своё */
+    fun gameCamera(on: Boolean) {
+        if (!busy) return
+        if (on && !camOn) { front = true; toggleCamera() }
+        else if (on && !front) flipCamera()
+        else if (!on && camOn) toggleCamera()
+    }
+
+    /** Логин собеседника (для игр во время звонка) */
+    val peerLogin: String get() = peers.values.firstOrNull()?.login ?: pending.values.firstOrNull() ?: firstLogin
 
     fun flipCamera() {
         val c = capturer ?: return

@@ -33,6 +33,9 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
           openCall: function() { window.webkit.messageHandlers.hx.postMessage({a: 'openCall'}); },
           inCall: function() { return false; },
           callLogReady: function() { window.webkit.messageHandlers.hx.postMessage({a: 'callLog'}); },
+          setVideoSlots: function(j) { window.webkit.messageHandlers.hx.postMessage({a: 'slots', j: String(j || '')}); },
+          gameCamera: function(on) { window.webkit.messageHandlers.hx.postMessage({a: 'gameCam', on: !!on}); },
+          startCallStay: function(l, t, v) { window.webkit.messageHandlers.hx.postMessage({a: 'startCall', l: String(l), t: String(t || ''), v: !!v, stay: true}); },
           setBars: function(dark) { window.webkit.messageHandlers.hx.postMessage({a: 'bars', dark: !!dark}); },
           fileBegin: function(sid, name, type) { window.webkit.messageHandlers.hx.postMessage({a: 'fileBegin', sid: String(sid), name: String(name)}); },
           fileChunk: function(sid, b64) { window.webkit.messageHandlers.hx.postMessage({a: 'fileChunk', sid: String(sid), b64: String(b64)}); },
@@ -81,7 +84,7 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         evaluate("window.hxSetVoip && hxSetVoip('\(t)')")
     }
 
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { sendVoipToken() }
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { sendVoipToken(); CallManager.shared.pageLoaded() }
 
     // Микрофон и камера для нашего сервера — без лишних вопросов (системный запрос iOS показывает один раз)
     @available(iOS 15.0, *)
@@ -124,7 +127,10 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         guard let d = message.body as? [String: Any], let a = d["a"] as? String else { return }
         switch a {
         case "startCall":
-            CallManager.shared.startOutgoing(login: d["l"] as? String ?? "", name: d["t"] as? String ?? "", video: d["v"] as? Bool ?? false)
+            CallManager.shared.startOutgoing(login: d["l"] as? String ?? "", name: d["t"] as? String ?? "", video: d["v"] as? Bool ?? false,
+                                             stay: d["stay"] as? Bool ?? false)
+        case "slots": CallManager.shared.setVideoSlots(d["j"] as? String ?? "")
+        case "gameCam": CallManager.shared.gameCamera(d["on"] as? Bool ?? false)
         case "openCall": CallManager.shared.showCallUI()
         case "callLog": pushCallLog()
         case "bars":

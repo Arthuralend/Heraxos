@@ -21,6 +21,7 @@ final class CallViewController: UIViewController {
     private let bHang = UIButton(type: .system)
     private let bMin = UIButton(type: .system)
     private let bAdd = UIButton(type: .system)
+    private let bGames = UIButton(type: .system)
     private let gradient = CAGradientLayer()
 
     private var renderers: [String: (RTCMTLVideoView, RTCVideoTrack)] = [:]
@@ -83,8 +84,13 @@ final class CallViewController: UIViewController {
         // свернуть / добавить участника
         style(bMin, "chevron.down", size: 44, color: UIColor(white: 1, alpha: 0.2)); bMin.addTarget(self, action: #selector(minimize), for: .touchUpInside)
         style(bAdd, "person.badge.plus", size: 44, color: UIColor(white: 1, alpha: 0.2)); bAdd.addTarget(self, action: #selector(addPerson), for: .touchUpInside)
-        bMin.accessibilityLabel = "Свернуть"; bAdd.accessibilityLabel = "Добавить участника"
-        add(bMin); add(bAdd)
+        style(bGames, "gamecontroller.fill", size: 44, color: UIColor(white: 1, alpha: 0.2)); bGames.addTarget(self, action: #selector(games), for: .touchUpInside)
+        bMin.accessibilityLabel = "Свернуть"; bAdd.accessibilityLabel = "Добавить участника"; bGames.accessibilityLabel = "Игры"
+        add(bMin); add(bAdd); add(bGames)
+        NSLayoutConstraint.activate([
+            bGames.topAnchor.constraint(equalTo: bMin.bottomAnchor, constant: 64),
+            bGames.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 14),
+        ])
         NSLayoutConstraint.activate([
             bMin.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
             bMin.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 14),
@@ -171,6 +177,7 @@ final class CallViewController: UIViewController {
     @objc private func mute() { CallManager.shared.requestMute(!CallEngine.shared.muted) }
     @objc private func hang() { CallManager.shared.requestEnd() }
     @objc private func minimize() { dismiss(animated: true) }
+    @objc private func games() { CallManager.shared.openGames(peer: CallEngine.shared.peerLogin) }
 
     @objc private func addPerson() {
         let e = CallEngine.shared
@@ -195,7 +202,7 @@ final class CallViewController: UIViewController {
 
     private func applyHidden() {
         let a: CGFloat = hidden ? 0 : 1
-        bar.alpha = a; bMin.alpha = a; bAdd.alpha = a
+        bar.alpha = a; bMin.alpha = a; bAdd.alpha = a; bGames.alpha = a
         info.alpha = hidden || CallEngine.shared.peers.count + CallEngine.shared.pending.count > 1 ? 0 : 1
     }
 
@@ -221,6 +228,7 @@ final class CallViewController: UIViewController {
         setOn(bMute, e.muted)
         bFlip.isHidden = !e.camOn
         bAdd.isHidden = e.id == nil
+        bGames.isHidden = e.peers.count > 1
 
         let who = e.peers.map { $0.login } + e.pending.filter { p in !e.peers.contains { $0.login.lowercased() == p.lowercased() } }
         let first = who.first ?? e.firstLogin

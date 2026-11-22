@@ -313,6 +313,17 @@ final class CallEngine {
         changed()
     }
 
+    /// Камера из игры: только фронтальная
+    func gameCamera(_ on: Bool) {
+        guard busy else { return }
+        if on && !camOn { front = true; toggleCamera() }
+        else if on && !front { flipCamera() }
+        else if !on && camOn { toggleCamera() }
+    }
+
+    /// Логин собеседника (для игр во время звонка)
+    var peerLogin: String { peers.first?.login ?? pending.first ?? firstLogin }
+
     func invite(login: String, name: String) {
         guard let cid = id else { return }
         if peers.count + pending.count + 1 >= MAX_CALL { toast("В звонке может быть не больше 5 человек"); return }
