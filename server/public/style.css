@@ -334,3 +334,8 @@ html.is-android .androidOnly{display:flex!important}
 .addbar #addNum{flex:0 0 120px}
 .row .sub .num{color:var(--mute);font-variant-numeric:tabular-nums}
 .modal-box input[type=text],.modal-box input[inputmode]{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);margin-top:8px;font-size:15px;outline:none}
+
+/* галочка согласия на экране регистрации: общий стиль полей (.authbox input) отключал её вид */
+.authbox .terms input[type=checkbox]{-webkit-appearance:checkbox;appearance:auto;width:22px;height:22px;min-width:22px;padding:0;margin:0;border:0;background:none;box-shadow:none;accent-color:var(--brand);cursor:pointer}
+.authbox .terms{font-size:14px;padding:6px 0}
+.authbox .terms span{flex:1}
