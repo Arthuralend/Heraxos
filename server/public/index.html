@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-title" content="Ahazang">
 <meta name="theme-color" content="#faf9f5">
 <meta name="color-scheme" content="light">
-<link rel="stylesheet" href="/style.css?v=14">
+<link rel="stylesheet" href="/style.css?v=15">
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute">
@@ -148,6 +148,7 @@
       <input type="file" id="fileIn" multiple hidden>
       <textarea id="txt" rows="1" placeholder="Сообщение"></textarea>
       <button class="sendbtn" id="bSend"><svg><use href="#i-send"/></svg></button>
+      <button class="sendbtn recbtn" id="bRec" title="Удерживайте — голосовое сообщение"><svg><use href="#i-mic"/></svg></button>
     </footer>
   </main>
 </div>
@@ -196,6 +197,9 @@
   <h3 id="infoTitle"></h3><div id="infoBody"></div><div class="modal-acts" id="infoActs"></div>
 </div></div>
 
+<!-- запись голосового / видеосообщения -->
+<div class="recui" id="recUI"><div class="rec-circle"><video id="recVideo" muted playsinline autoplay></video></div>
+  <div class="rec-bar"><i class="rec-dot"></i><span id="recTime">0:00</span><span class="rec-hint">← влево — отмена</span><span class="rec-x">Отпустите — отменить</span></div></div>
 <div id="toast"></div>
 <audio id="ring" src="/ring.wav" loop preload="auto"></audio>
 <script>
@@ -215,9 +219,9 @@
   addEventListener('unhandledrejection', function (e) { var r = e.reason; d('reject', r && (r.stack || r.message) || r); });
 })();
 </script>
-<script src="/crypto.js?v=14"></script>
-<script src="/app.js?v=14"></script>
-<script src="/games-rules.js?v=14"></script>
-<script src="/games.js?v=14"></script>
+<script src="/crypto.js?v=15"></script>
+<script src="/app.js?v=15"></script>
+<script src="/games-rules.js?v=15"></script>
+<script src="/games.js?v=15"></script>
 </body>
 </html>

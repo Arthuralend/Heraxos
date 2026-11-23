@@ -1,5 +1,5 @@
 // Ahazang — клиент
-const APP_VERSION = '14';
+const APP_VERSION = '15';
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 let token = localStorage.getItem('hx_token'), me = localStorage.getItem('hx_me');
@@ -206,6 +206,7 @@ function connect() {
   s.onmessage = (e) => { let m; try { m = JSON.parse(e.data); } catch { return; } wsQueue = wsQueue.then(() => onWS(m)).catch((x) => D('ws-err', errText(x))); };
 }
 const send = (m) => { if (!ws || ws.readyState !== 1) return false; ws.send(JSON.stringify(m)); return true; };
+document.addEventListener('visibilitychange', () => { if (!document.hidden && AND) pushState(); });
 document.addEventListener('visibilitychange', () => {
   // приложение свернули во время входящего — дальше звонит система; открыли — звонит страница
   if (call && call.dir === 'ring') {
@@ -461,6 +462,10 @@ function renderMsgs(scroll) {
         <button class="gi-btn${mine ? ' mine' : ''}" data-gi="${i}">${mine ? 'Ждём соперника' : '🎮 Играть'}</button><span class="meta">${fmtTime(m.ts)} ${st}</span></div></div>`;
       lastF = m.f; continue;
     }
+    if (f && f.vn) {
+      html += `<div class="m ${mine ? 'o' : ''} ${m.f !== lastF ? 'first' : ''}"><div class="b ${f.vn === 'v' ? 'vnb' : 'voiceb'}">${voiceHTML(f, m, i)}<span class="meta">${fmtTime(m.ts)} ${st}</span></div></div>`;
+      lastF = m.f; continue;
+    }
     if (f) {
       html += `<div class="m ${mine ? 'o' : ''} ${m.f !== lastF ? 'first' : ''}"><div class="b file" data-fi="${i}">${fileHTML(f, m)}<span class="meta">${fmtTime(m.ts)} ${st}</span></div></div>`;
       lastF = m.f; continue;
@@ -514,6 +519,7 @@ $('bGameChat').onclick = () => {
 };
 async function sendMsg() {
   const text = $('txt').value.trim(); if (!text || !cur) return;
+  setTimeout(composerState, 0);
   if (!cur.pub) { cur.pub = await peerKey(cur.peer, true).catch(() => null); if (!cur.pub) return toast('Собеседник ещё ни разу не входил — ключа шифрования пока нет'); }
   const { iv, ct } = await HX.seal(cur.pub, text);
   const cid = Math.random().toString(36).slice(2);
@@ -641,9 +647,20 @@ const kindOf = (f) => (/^image\//.test(f.t) ? 'image' : /^video\//.test(f.t) ? '
 function previewOf(t) {
   const gi = gameOf(t); if (gi) return '🎮 Приглашение: ' + (window.hxGameTitle ? hxGameTitle(gi.g) : 'игра');
   const f = fileOf(t); if (!f) return t;
+  if (f.vn === 'a') return '🎤 Голосовое сообщение' + (f.d ? ' · ' + fmtDur(f.d) : '');
+  if (f.vn === 'v') return '📹 Видеосообщение' + (f.d ? ' · ' + fmtDur(f.d) : '');
   return { image: '📷 Фото', video: '🎬 Видео', audio: '🎵 Аудио', file: '📎 ' + f.n }[kindOf(f)];
 }
 const fmtSize = (n) => (n < 1024 ? n + ' Б' : n < 1048576 ? Math.round(n / 1024) + ' КБ' : (n / 1048576).toFixed(n < 10485760 ? 1 : 0) + ' МБ');
+const fmtDur = (s) => `${Math.floor(s / 60)}:${pad(Math.round(s) % 60)}`;
+// голосовое: кнопка ▶, полоска, длительность; видеосообщение: кружок с кадром
+function voiceHTML(f, m, i) {
+  const bar = m.pending && !m.failed ? `<div class="fbar"><i style="width:${Math.round((m.progress || 0) * 100)}%"></i></div>` : '';
+  const err = m.failed ? '<div class="ferr">Не отправлено — нажмите, чтобы повторить</div>' : '';
+  const thumb = typeof f.th === 'string' && /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(f.th) ? f.th : '';
+  if (f.vn === 'v') return `<div class="vnote" data-vn="${i}">${thumb ? `<img src="${thumb}" alt="">` : ''}<span class="vplay">▶</span><span class="vdur">${fmtDur(f.d || 0)}</span></div>${bar}${err}`;
+  return `<div class="voice" data-vn="${i}"><button class="vbtn" aria-label="Слушать">▶</button><div class="vwave"><i></i></div><span class="vdur">${fmtDur(f.d || 0)}</span></div>${bar}${err}`;
+}
 function fileHTML(f, m) {
   const bar = m.pending && !m.failed ? `<div class="fbar"><i style="width:${Math.round((m.progress || 0) * 100)}%"></i></div>` : '';
   const err = m.failed ? '<div class="ferr">Не отправлено — нажмите, чтобы повторить</div>' : '';
@@ -678,19 +695,20 @@ function uploadBlob(blob, peer, onProgress) {
     x.send(blob);
   });
 }
-async function sendFile(file, m) {
+async function sendFile(file, m, extra) {
   if (!cur) return;
   const peer = cur.peer;
   if (file.size > MAX_FILE_MB * 1048576) return toast(`Файл больше ${MAX_FILE_MB} МБ`);
   if (!cur.pub) { cur.pub = await peerKey(peer, true).catch(() => null); if (!cur.pub) return toast('Собеседник ещё ни разу не входил — ключа шифрования пока нет'); }
   const pub = cur.pub;
-  if (!m) { m = { cid: Math.random().toString(36).slice(2), f: me, ts: Date.now(), text: '', file: { n: file.name, s: file.size, t: file.type || '' }, pending: true, progress: 0, src: file }; cur.msgs.push(m); }
+  if (!m) { m = { cid: Math.random().toString(36).slice(2), f: me, ts: Date.now(), text: '', file: Object.assign({ n: file.name, s: file.size, t: file.type || '' }, extra || {}), pending: true, progress: 0, src: file, extra }; cur.msgs.push(m); }
+  extra = extra || m.extra;
   m.failed = false; m.pending = true; m.progress = 0; renderMsgs(true);
   try {
     const th = await makeThumb(file); if (th) { m.file.th = th; renderSoon(); }
     const enc = await HX.sealFile(file, (p) => { m.progress = p * 0.25; renderSoon(); });
     const { id } = await uploadBlob(enc.blob, peer, (p) => { m.progress = 0.25 + p * 0.75; renderSoon(); });
-    const info = { id, k: enc.k, iv: enc.iv, n: file.name, s: file.size, t: file.type || '' }; if (th) info.th = th;
+    const info = Object.assign({ id, k: enc.k, iv: enc.iv, n: file.name, s: file.size, t: file.type || '' }, extra || {}); if (th) info.th = th;
     m.text = 'HXF1:' + JSON.stringify(info); m.file = info;
     const { iv, ct } = await HX.seal(pub, m.text);
     if (!send({ type: 'msg', to: peer, iv, ct, cid: m.cid })) throw new Error('Нет соединения, файл не отправлен');
@@ -698,6 +716,119 @@ async function sendFile(file, m) {
   } catch (e) { m.failed = true; toast(e.message, 3500); }
   renderMsgs();
 }
+// ---------- голосовые и видеосообщения ----------
+// Кнопка справа: короткое нажатие — переключить микрофон / камеру, удержание — запись,
+// отпустили — отправка, увели палец влево — отмена. Запись шифруется как обычный файл.
+let recMode = localStorage.getItem('hx_recmode') === 'v' ? 'v' : 'a', rec = null, playing = null;
+const recTypes = (video) => (video
+  ? ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp8,opus', 'video/webm']
+  : ['audio/mp4;codecs=mp4a.40.2', 'audio/mp4', 'audio/aac', 'audio/webm;codecs=opus', 'audio/webm']).find((t) => { try { return MediaRecorder.isTypeSupported(t); } catch { return false; } }) || '';
+function setRecMode(m) {
+  recMode = m; try { localStorage.setItem('hx_recmode', m); } catch {}
+  $('bRec').innerHTML = `<svg><use href="#${m === 'v' ? 'i-video' : 'i-mic'}"/></svg>`;
+  $('bRec').title = m === 'v' ? 'Удерживайте — видеосообщение (нажмите — голосовое)' : 'Удерживайте — голосовое (нажмите — видеосообщение)';
+}
+function composerState() { $('composer').classList.toggle('has-text', !!$('txt').value.trim()); }
+$('txt').addEventListener('input', composerState);
+async function recStart() {
+  if (!cur || isBlocked(cur.peer)) return;
+  if (!window.MediaRecorder || !navigator.mediaDevices) { rec = null; return toast('Запись не поддерживается на этом устройстве'); }
+  if (call) { rec = null; return toast('Во время звонка запись недоступна'); }
+  const video = recMode === 'v', r = rec;
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      video: video ? { facingMode: 'user', width: { ideal: 480 }, height: { ideal: 480 }, frameRate: { ideal: 30 } } : false });
+  } catch { rec = null; return toast(video ? 'Нет доступа к камере или микрофону' : 'Нет доступа к микрофону', 3000); }
+  if (rec !== r || !r || r.done) { stream.getTracks().forEach((t) => t.stop()); if (r && r.done && !r.started) toast('Удерживайте кнопку, пока говорите', 2200); return; }
+  const type = recTypes(video);
+  let mr;
+  try { mr = new MediaRecorder(stream, Object.assign(type ? { mimeType: type } : {}, video ? { videoBitsPerSecond: 700000, audioBitsPerSecond: 48000 } : { audioBitsPerSecond: 40000 })); }
+  catch { try { mr = new MediaRecorder(stream); } catch { stream.getTracks().forEach((t) => t.stop()); rec = null; return toast('Запись не поддерживается на этом устройстве'); } }
+  Object.assign(r, { stream, mr, chunks: [], video, t0: Date.now(), started: true, type: mr.mimeType || type });
+  mr.ondataavailable = (e) => e.data && e.data.size && r.chunks.push(e.data);
+  mr.onstop = () => recFinish(r);
+  mr.start(250);
+  const ui = $('recUI'); ui.classList.add('on'); ui.classList.toggle('video', video); ui.classList.remove('cancel');
+  if (video) { const v = $('recVideo'); v.srcObject = stream; v.play().catch(() => {}); setTimeout(() => { if (rec === r) r.th = grabFrame(v); }, 400); }
+  try { navigator.vibrate && navigator.vibrate(30); } catch {}
+  r.timer = setInterval(() => {
+    const sec = (Date.now() - r.t0) / 1000;
+    $('recTime').textContent = fmtDur(sec);
+    if (sec >= (video ? 60 : 300)) recStop(false);
+  }, 200);
+}
+function grabFrame(v) {
+  try { const c = document.createElement('canvas'), n = 200, w = v.videoWidth, h = v.videoHeight; if (!w) return '';
+    const sz = Math.min(w, h); c.width = c.height = n; const g = c.getContext('2d');
+    g.drawImage(v, (w - sz) / 2, (h - sz) / 2, sz, sz, 0, 0, n, n);
+    return c.toDataURL('image/jpeg', 0.7); } catch { return ''; }
+}
+function recStop(cancel) {
+  const r = rec; if (!r) return;
+  r.done = true; r.cancel = cancel; rec = null;
+  clearInterval(r.timer);
+  $('recUI').classList.remove('on', 'cancel'); $('recVideo').srcObject = null;
+  if (r.mr && r.mr.state !== 'inactive') r.mr.stop(); else if (r.stream) r.stream.getTracks().forEach((t) => t.stop());
+}
+function recFinish(r) {
+  r.stream.getTracks().forEach((t) => t.stop());
+  const dur = (Date.now() - r.t0) / 1000;
+  if (r.cancel) return toast('Запись отменена', 1200);
+  if (dur < 0.8 || !r.chunks.length) return toast('Слишком коротко — удерживайте кнопку', 1800);
+  const type = (r.type || (r.video ? 'video/webm' : 'audio/webm')).split(';')[0];
+  const ext = /mp4/.test(type) ? (r.video ? 'mp4' : 'm4a') : /aac/.test(type) ? 'aac' : 'webm';
+  const blob = new Blob(r.chunks, { type });
+  const file = new File([blob], `${r.video ? 'video' : 'voice'}-${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')}.${ext}`, { type });
+  sendFile(file, null, Object.assign({ vn: r.video ? 'v' : 'a', d: Math.round(dur) }, r.th ? { th: r.th } : {}));
+}
+(function recButton() {
+  const b = $('bRec'); let down = null;
+  b.addEventListener('pointerdown', (e) => {
+    e.preventDefault(); try { b.setPointerCapture(e.pointerId); } catch {}
+    down = { x: e.clientX, t: Date.now(), id: e.pointerId };
+    down.hold = setTimeout(() => { if (down) { rec = { x0: down.x }; recStart(); } }, 220);
+  });
+  b.addEventListener('pointermove', (e) => {
+    if (!down || e.pointerId !== down.id || !rec) return;
+    $('recUI').classList.toggle('cancel', e.clientX - down.x < -70);
+  });
+  const up = (e) => {
+    if (!down || e.pointerId !== down.id) return;
+    clearTimeout(down.hold);
+    const tap = Date.now() - down.t < 220 && !rec, dx = e.clientX - down.x; down = null;
+    if (tap) { setRecMode(recMode === 'a' ? 'v' : 'a'); return toast(recMode === 'v' ? '📹 Видеосообщение — удерживайте кнопку' : '🎤 Голосовое — удерживайте кнопку', 1500); }
+    if (rec) { if (!rec.started) { rec.done = true; rec = null; return; } recStop(e.type === 'pointercancel' || dx < -70); }
+  };
+  b.addEventListener('pointerup', up); b.addEventListener('pointercancel', up);
+  b.addEventListener('contextmenu', (e) => e.preventDefault());
+  setRecMode(recMode); composerState();
+})();
+// воспроизведение: расшифровали → играем прямо в сообщении
+$('msgs').addEventListener('click', async (e) => {
+  const el = e.target.closest('[data-vn]'); if (!el || !cur) return;
+  e.stopPropagation();
+  const m = cur.msgs[+el.dataset.vn], f = m && (m.file || fileOf(m.text)); if (!f) return;
+  if (m.failed && m.src) return sendFile(m.src, m);
+  if (m.pending) return;
+  if (playing && playing.el === el) { playing.media.paused ? playing.media.play() : playing.media.pause(); return; }
+  if (playing) { playing.media.pause(); playing.stop(); }
+  const blob = m.src || (await fetchFile(f).catch(() => null)); if (!blob) return;
+  $('toast').style.display = 'none';
+  const url = URL.createObjectURL(blob);
+  let media;
+  if (f.vn === 'v') { media = document.createElement('video'); media.playsInline = true; media.setAttribute('playsinline', ''); media.src = url; el.prepend(media); el.classList.add('on'); }
+  else { media = new Audio(url); el.classList.add('on'); }
+  const btn = el.querySelector('.vbtn'), fill = el.querySelector('.vwave i'), dur = el.querySelector('.vdur');
+  const p = { el, media, stop: () => { el.classList.remove('on', 'pl'); if (btn) btn.textContent = '▶'; if (fill) fill.style.width = '0'; if (f.vn === 'v') media.remove(); if (dur) dur.textContent = fmtDur(f.d || 0); URL.revokeObjectURL(url); if (playing === p) playing = null; } };
+  playing = p;
+  media.onplay = () => { el.classList.add('pl'); if (btn) btn.textContent = '❚❚'; };
+  media.onpause = () => { el.classList.remove('pl'); if (btn) btn.textContent = '▶'; };
+  media.ontimeupdate = () => { const d = isFinite(media.duration) && media.duration > 0 ? media.duration : f.d || 1; if (fill) fill.style.width = Math.min(100, (media.currentTime / d) * 100) + '%'; if (dur) dur.textContent = fmtDur(media.currentTime); };
+  media.onended = () => p.stop();
+  media.play().catch(() => toast('Не удалось воспроизвести'));
+}, true);
+
 $('bAttach').onclick = () => { if (!cur) return; $('fileIn').value = ''; $('fileIn').click(); };
 $('fileIn').onchange = () => { for (const f of [...$('fileIn').files]) sendFile(f); };
 
@@ -769,13 +900,21 @@ $('txt').addEventListener('input', () => {
 const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
 function pushState() {
-  if (AND) { $('pushState').textContent = window.HeraxosPlatform === 'ios' ? 'Тестовая версия: звонки приходят, пока приложение открыто' : 'Звонки и сообщения приходят через приложение Ahazang'; return; }
+  if (AND) {
+    // в приложениях уведомления даёт само приложение (не браузер)
+    let on = null; try { if (AND.notifyEnabled) on = !!AND.notifyEnabled(); } catch {}
+    $('pushState').textContent = window.HeraxosPlatform === 'ios'
+      ? 'Звонки приходят на системный экран даже при закрытом приложении. Нажмите, чтобы открыть настройки'
+      : on === false ? '⚠️ Выключены в настройках Android — нажмите, чтобы включить' : 'Включены: звонки и сообщения приходят через приложение. Нажмите — настройки';
+    return;
+  }
   const s = !('PushManager' in window) ? (isIOS && !standalone ? 'Сначала добавьте на экран «Домой»' : 'Не поддерживается этим браузером')
     : Notification.permission === 'granted' ? 'Включены' : Notification.permission === 'denied' ? 'Запрещены в настройках браузера' : 'Нажмите, чтобы включить';
   $('pushState').textContent = s;
   if (window.Notification && Notification.permission === 'granted') subscribePush();
 }
 async function enablePush() {
+  if (AND) { try { AND.notifySettings ? AND.notifySettings() : toast('Обновите приложение Ahazang'); } catch {} setTimeout(pushState, 1500); return; }
   if (isIOS && !standalone) return toast('Нажмите «Поделиться» → «На экран Домой», затем откройте Ahazang со значка', 5000);
   if (!('PushManager' in window)) return toast('Браузер не поддерживает уведомления');
   if ((await Notification.requestPermission()) === 'granted') { await subscribePush(); toast('Уведомления включены'); }
@@ -1366,6 +1505,7 @@ function ring(on) {
 const REPO = 'Arthuralend/Heraxos';
 const APK_URL = `https://github.com/${REPO}/releases/latest/download/Ahazang.apk`;
 const WHATS_NEW = [
+  'Голосовые и видеосообщения: удерживайте кнопку 🎤 справа в чате. Короткое нажатие переключает на видео 📹, увести палец влево — отменить',
   'Приглашение в игру прямо в чате: кнопка 🎮 в шапке переписки, у собеседника появится карточка «Играть»',
   'Во время игры — кнопки звонка: позвонить, завершить, включить видео и микрофон; приглашение видно и поверх экрана звонка',
   'Новые танки: «Танчики 3D» — под экран телефона, плавающий джойстик и кнопка «Выйти»',
