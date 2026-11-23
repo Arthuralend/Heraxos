@@ -386,12 +386,23 @@ class MainActivity : Activity() {
             return
         }
         if (requestCode == 6 && has(Manifest.permission.CAMERA)) { CallEngine.gameCamera(true); return }
+        if (requestCode == 8) {
+            if (!has(Manifest.permission.POST_NOTIFICATIONS)) openNotifySettings()
+            web.evaluateJavascript("window.pushState && pushState()", null)
+            return
+        }
         if (requestCode == 2) {
             val req = pendingPermission ?: return
             pendingPermission = null
             if (grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) req.grant(req.resources)
             else req.deny()
         }
+    }
+
+    private fun openNotifySettings() {
+        runCatching {
+            startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName))
+        }.onFailure { runCatching { startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) } }
     }
 
     // Один раз просим: показ звонка на весь экран (Android 14+) и работу в фоне без ограничений батареи
@@ -513,6 +524,27 @@ class MainActivity : Activity() {
 
         @JavascriptInterface
         fun appVersion(): Int = BuildConfig.VERSION_CODE
+
+        /** Уведомления приложения включены в настройках Android? */
+        @JavascriptInterface
+        fun notifyEnabled(): Boolean {
+            val nm = getSystemService(NotificationManager::class.java)
+            val perm = Build.VERSION.SDK_INT < 33 || has(Manifest.permission.POST_NOTIFICATIONS)
+            return perm && nm.areNotificationsEnabled()
+        }
+
+        /** Открыть системные настройки уведомлений Ahazang (и попросить разрешение на Android 13+) */
+        @JavascriptInterface
+        fun notifySettings() {
+            runOnUiThread {
+                CallService.start(applicationContext)
+                // Android 13+: сначала системный запрос разрешения; если отказано навсегда — откроем настройки
+                if (Build.VERSION.SDK_INT >= 33 && !has(Manifest.permission.POST_NOTIFICATIONS)) {
+                    requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 8); return@runOnUiThread
+                }
+                openNotifySettings()
+            }
+        }
 
         // ---- нативные звонки: интерфейс только начинает звонок, дальше всё ведёт CallEngine ----
         @JavascriptInterface

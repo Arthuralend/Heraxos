@@ -32,6 +32,7 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
           startCall: function(l, t, v) { window.webkit.messageHandlers.hx.postMessage({a: 'startCall', l: String(l), t: String(t || ''), v: !!v}); },
           openCall: function() { window.webkit.messageHandlers.hx.postMessage({a: 'openCall'}); },
           inCall: function() { return false; },
+          notifySettings: function() { window.webkit.messageHandlers.hx.postMessage({a: 'notifySettings'}); },
           callLogReady: function() { window.webkit.messageHandlers.hx.postMessage({a: 'callLog'}); },
           setVideoSlots: function(j) { window.webkit.messageHandlers.hx.postMessage({a: 'slots', j: String(j || '')}); },
           gameCamera: function(on) { window.webkit.messageHandlers.hx.postMessage({a: 'gameCam', on: !!on}); },
@@ -139,6 +140,8 @@ final class WebViewController: UIViewController, WKUIDelegate, WKNavigationDeleg
         case "gameInvite": CallManager.shared.gameInvite(name: d["n"] as? String ?? "", title: d["t"] as? String ?? "")
         case "openCall": CallManager.shared.showCallUI()
         case "callLog": pushCallLog()
+        case "notifySettings":
+            if let u = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(u) }
         case "bars":
             darkBars = d["dark"] as? Bool ?? false
             setNeedsStatusBarAppearanceUpdate()
