@@ -1,5 +1,5 @@
 // Ahazang — клиент
-const APP_VERSION = '15';
+const APP_VERSION = '16';
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 let token = localStorage.getItem('hx_token'), me = localStorage.getItem('hx_me');
@@ -249,6 +249,7 @@ async function onWS(m) {
       return hardReload(m.v);
     case 'msg': return onMessage(m);
     case 'sent': return onSent(m);
+    case 'del': return onDeleted(m);
     case 'read':
       if (cur && cur.peer.toLowerCase() === m.from.toLowerCase()) { cur.peerRead = Math.max(cur.peerRead, m.ts); renderMsgs(); }
       return loadChatsSoon();
@@ -396,7 +397,9 @@ function renderChats() {
     const d = document.createElement('div'); d.className = 'row' + (cur && cur.peer === c.peer ? ' sel' : '');
     d.innerHTML = `${avaHTML(c.peer, online.has(c.peer.toLowerCase()))}<div class="body"><div class="top"><b>${esc(dn(c.peer))}</b><time class="${c.unread ? 'unr' : ''}">${fmtList(c.last.ts)}</time></div>
       <div class="sub"><span>${tick}${esc(prev)}</span>${c.unread ? `<b class="badge">${c.unread}</b>` : ''}</div></div>`;
-    d.onclick = () => openChat(c.peer); L.appendChild(d);
+    d.onclick = () => { if (d.dataset.lp) { delete d.dataset.lp; return; } openChat(c.peer); };
+    onLongPress(d, () => { d.dataset.lp = '1'; chatMenu(c.peer); });
+    L.appendChild(d);
   });
   const withChat = new Set(chats.map((c) => c.peer.toLowerCase()));
   const rest = users.filter((u) => !withChat.has(u.login.toLowerCase()) && match(u.login))
@@ -517,6 +520,70 @@ $('bGameChat').onclick = () => {
     { label: 'Отмена' },
   ]);
 };
+// ---------- удаление сообщений: стираются на сервере и у обоих собеседников ----------
+const fileIdsOf = (list) => list.map((m) => { const f = m.file || fileOf(m.text); return f && /^[a-f0-9]{32}$/.test(String(f.id || '')) ? f.id : null; }).filter(Boolean);
+async function deleteMsgs(peer, msgs) {
+  const local = msgs.filter((m) => !m.id), remote = msgs.filter((m) => m.id);
+  if (cur && K(cur.peer) === K(peer) && local.length) { cur.msgs = cur.msgs.filter((m) => !local.includes(m)); renderMsgs(); }
+  if (!remote.length) return;
+  try { await api('/api/messages/' + encodeURIComponent(K(peer)) + '/delete', { ids: remote.map((m) => m.id), files: fileIdsOf(remote) }); }
+  catch (e) { toast(e.message || 'Не удалось удалить'); }
+}
+function askClearChat(peer) {
+  infoSheet('Очистить переписку?', `<p class="mute">Все сообщения, фото, голосовые и файлы с ${esc(dn(peer))} будут удалены с сервера — у вас и у собеседника.</p>`, [
+    { label: 'Очистить', danger: true, on: async () => {
+      const files = cur && K(cur.peer) === K(peer) ? fileIdsOf(cur.msgs) : [];
+      try { await api('/api/messages/' + encodeURIComponent(K(peer)) + '/delete', { all: true, files }); toast('Переписка очищена', 1500); }
+      catch (e) { toast(e.message || 'Не удалось очистить'); }
+    } },
+    { label: 'Отмена', primary: true },
+  ]);
+}
+function chatMenu(peer) {
+  infoSheet(dn(peer), '', [
+    { label: '💬 Открыть', primary: true, on: () => openChat(peer) },
+    { label: '🗑 Очистить переписку', danger: true, on: () => askClearChat(peer) },
+    { label: 'Закрыть' },
+  ]);
+}
+function onDeleted(m) {
+  if (cur && K(cur.peer) === K(m.peer)) {
+    const ids = new Set(m.ids || []);
+    cur.msgs = m.all ? cur.msgs.filter((x) => !x.id && K(x.f) === K(me) && x.pending) : cur.msgs.filter((x) => !ids.has(x.id));
+    for (const id of ids) plain.delete(id);
+    renderMsgs();
+  }
+  loadChatsSoon();
+}
+// долгое нажатие на сообщение: копировать / удалить у обоих
+function msgMenu(i) {
+  const m = cur && cur.msgs[i]; if (!m) return;
+  const f = m.file || fileOf(m.text), gi = gameOf(m.text);
+  const isText = !f && !gi && typeof m.text === 'string';
+  const what = gi ? 'приглашение' : f && f.vn === 'a' ? 'голосовое сообщение' : f && f.vn === 'v' ? 'видеосообщение' : f ? 'файл' : 'сообщение';
+  infoSheet(what[0].toUpperCase() + what.slice(1), isText ? `<p class="mute msg-quote">${esc(m.text.slice(0, 200))}</p>` : '', [
+    isText ? { label: '📋 Копировать', on: async () => { try { await navigator.clipboard.writeText(m.text); toast('Скопировано', 1200); } catch { toast('Не удалось скопировать'); } } } : null,
+    { label: '🗑 Удалить у всех', danger: true, on: () => deleteMsgs(cur.peer, [m]) },
+    { label: 'Отмена', primary: true },
+  ].filter(Boolean));
+}
+(function msgLongPress() {
+  const box = $('msgs'); let t = null, x = 0, y = 0, fired = false;
+  const stop = () => { clearTimeout(t); t = null; };
+  box.addEventListener('pointerdown', (e) => {
+    const bub = e.target.closest('.m .b'); if (!bub) return;
+    const row = bub.closest('.m'), i = [...box.querySelectorAll('.m')].indexOf(row);
+    fired = false; x = e.clientX; y = e.clientY; stop();
+    t = setTimeout(() => { t = null; fired = true; try { navigator.vibrate && navigator.vibrate(25); } catch {} bub.classList.add('held'); setTimeout(() => bub.classList.remove('held'), 300); msgMenu(msgIndexAt(i)); }, 480);
+  });
+  box.addEventListener('pointermove', (e) => { if (t && Math.hypot(e.clientX - x, e.clientY - y) > 10) stop(); });
+  box.addEventListener('pointerup', stop); box.addEventListener('pointercancel', stop);
+  box.addEventListener('contextmenu', (e) => { if (e.target.closest('.m .b')) e.preventDefault(); });
+  // после долгого нажатия обычный «клик» (открыть файл, играть) не нужен
+  box.addEventListener('click', (e) => { if (fired) { fired = false; e.stopPropagation(); e.preventDefault(); } }, true);
+})();
+// .m на экране идут в том же порядке, что cur.msgs (дни — отдельные элементы .day)
+const msgIndexAt = (i) => i;
 async function sendMsg() {
   const text = $('txt').value.trim(); if (!text || !cur) return;
   setTimeout(composerState, 0);
@@ -596,6 +663,7 @@ $('bMore').onclick = () => {
     { label: saved ? 'Изменить имя' : 'Сохранить в контакты', primary: true, on: () => askName(peer) },
     saved ? { label: 'Удалить из контактов', on: () => removeContact(peer) } : null,
     !b && window.hxGames ? { label: '🎮 Сыграть в игру', on: () => hxGames(peer) } : null,
+    { label: '🗑 Очистить переписку', danger: true, on: () => askClearChat(peer) },
     { label: 'Пожаловаться', on: () => askReport(peer) },
     b ? { label: 'Разблокировать', primary: true, on: () => setBlocked(peer, false) } : { label: 'Заблокировать', danger: true, on: () => askBlock(peer) },
     { label: 'Закрыть' },
@@ -1505,6 +1573,7 @@ function ring(on) {
 const REPO = 'Arthuralend/Heraxos';
 const APK_URL = `https://github.com/${REPO}/releases/latest/download/Ahazang.apk`;
 const WHATS_NEW = [
+  'Удаление сообщений: удерживайте сообщение → «Удалить у всех». Удаляется на сервере и у собеседника, вместе с файлом. В меню чата — «Очистить переписку»',
   'Голосовые и видеосообщения: удерживайте кнопку 🎤 справа в чате. Короткое нажатие переключает на видео 📹, увести палец влево — отменить',
   'Приглашение в игру прямо в чате: кнопка 🎮 в шапке переписки, у собеседника появится карточка «Играть»',
   'Во время игры — кнопки звонка: позвонить, завершить, включить видео и микрофон; приглашение видно и поверх экрана звонка',
