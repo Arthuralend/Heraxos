@@ -300,6 +300,31 @@ app.get('/api/messages/:peer', auth, contactOnly, (req, res) => {
   res.json({ msgs: list.map((m) => ({ ...m, f: name(m.f) })), peerRead: (db.reads[pk] || {})[peer] || 0 });
 });
 
+// Удалить сообщения (у обоих): стираются на сервере вместе с файлами, собеседнику — команда убрать их с экрана.
+// { ids: [...] } — выбранные, { all: true } — вся переписка
+app.post('/api/messages/:peer/delete', auth, (req, res) => {
+  const peer = String(req.params.peer || '').toLowerCase();
+  if (!db.users[peer] || peer === req.me) return res.status(404).json({ error: 'Нет такого чата' });
+  const pk = pairKey(req.me, peer), list = db.msgs[pk] || [];
+  const all = !!(req.body && req.body.all);
+  const ids = new Set((Array.isArray(req.body && req.body.ids) ? req.body.ids : []).map(String).slice(0, 500));
+  const keep = all ? [] : list.filter((m) => !ids.has(m.id));
+  const removed = all ? list.map((m) => m.id) : list.filter((m) => ids.has(m.id)).map((m) => m.id);
+  if (all) delete db.msgs[pk]; else db.msgs[pk] = keep;
+  // файлы этих сообщений (клиент знает их номера — содержимое сообщений сервер не видит)
+  for (const id of (Array.isArray(req.body && req.body.files) ? req.body.files : []).map(String).slice(0, 500)) {
+    const f = fileMeta(id);
+    if (f && ((f.o === req.me && f.t === peer) || (f.o === peer && f.t === req.me))) dropFile(id);
+  }
+  if (all) for (const [id, f] of Object.entries(db.files)) if ((f.o === req.me && f.t === peer) || (f.o === peer && f.t === req.me)) dropFile(id);
+  save();
+  const ev = { type: 'del', ids: removed, all };
+  for (const w of online.get(req.me) || []) w.readyState === 1 && w.send(JSON.stringify({ ...ev, peer: name(peer) }));
+  sendTo(peer, { ...ev, peer: name(req.me) });
+  console.log('[del]', req.me, '↔', peer, all ? 'вся переписка' : removed.length + ' сообщ.');
+  res.json({ ok: true, removed: removed.length });
+});
+
 app.post('/api/read/:peer', auth, contactOnly, (req, res) => {
   const peer = req.params.peer.toLowerCase(), pk = pairKey(req.me, peer), ts = +req.body.ts || Date.now();
   db.reads[pk] ||= {}; if (ts > (db.reads[pk][req.me] || 0)) { db.reads[pk][req.me] = ts; save(); }

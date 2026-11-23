@@ -551,3 +551,7 @@ html.is-android .androidOnly{display:flex!important}
 .vnote.pl .vplay{opacity:0}
 .vnote .vdur{position:absolute;left:50%;bottom:10px;transform:translateX(-50%);background:rgba(20,20,19,.55);color:#fff;padding:2px 8px;border-radius:10px;font-size:12px}
 .b.vnb .meta{display:block;text-align:right;margin-top:4px}
+/* долгое нажатие на сообщение — меню (без системного выделения текста) */
+.m .b{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;transition:transform .15s}
+.m .b.held{transform:scale(.96)}
+.msg-quote{white-space:pre-wrap;max-height:120px;overflow:hidden;border-left:3px solid var(--brand);padding-left:10px}
