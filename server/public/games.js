@@ -8,11 +8,13 @@
   const bridge = () => window.HeraxosAndroid || null;
   const call0 = (fn, ...a) => { try { const b = bridge(); return b && b[fn] ? b[fn](...a) : undefined; } catch { return undefined; } };
 
-  const GAMES = {
+  const GAMES_ALL = {
     chess: { title: 'Шахматы', sub: 'Классика: мат, пат, рокировка, взятие на проходе', ai: true },
     checkers: { title: 'Шашки', sub: 'Русские шашки: бить обязательно, дамка ходит далеко', ai: true },
     tanks: { title: 'Танчики 3D', sub: 'Защитите штаб от вражеских танков — одиночная игра', ai: false, solo: true, soloOnly: true },
-  };
+  };  // «Танчики 3D» на iPhone выключены (версия для App Store) — только Android
+  const GAMES = Object.fromEntries(Object.entries(GAMES_ALL).filter(([k]) => !(k === 'tanks' && window.HeraxosPlatform === 'ios')));
+
 
   // ---------- иконки ----------
   const PIECE = {
