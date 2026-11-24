@@ -110,9 +110,11 @@ def age_rating():
     d = call('GET', f'/v1/appInfos/{INFO}/ageRatingDeclaration')['data']
     attrs = d['attributes']
     TRUE = {'messagingAndChat', 'userGeneratedContent'}
-    SKIP = {'kidsAgeBand', 'ageRatingOverride', 'ageRatingOverrideV2', 'koreaAgeRatingOverride', 'developerAgeRatingInfoUrl'}
+    SKIP = {'kidsAgeBand', 'ageRatingOverride', 'ageRatingOverrideV2', 'koreaAgeRatingOverride', 'developerAgeRatingInfoUrl',
+            'gracRatingClassificationNumber'}
     BOOL = {'gambling', 'unrestrictedWebAccess', 'seventeenPlus', 'lootBox', 'parentalControls', 'ageAssurance', 'advertising',
-            'healthOrWellnessTopics', 'messagingAndChat', 'userGeneratedContent'}
+            'healthOrWellnessTopics', 'messagingAndChat', 'userGeneratedContent', 'datingAndRelationships', 'sharedLocation',
+            'socialMedia', 'socialMediaAgeRestricted'}
     out = {}
     for k in attrs:
         if k in SKIP:
@@ -288,14 +290,14 @@ def availability():
     url, params = '/v1/territories', {'limit': 200}
     terrs = [t['id'] for t in call('GET', url, params=params)['data']]
     inc, rel = [], []
-    for i, t in enumerate(x for x in terrs if x != 'CHN'):
+    for i, t in enumerate(terrs):
         lid = '${t%d}' % i
         rel.append({'type': 'territoryAvailabilities', 'id': lid})
-        inc.append({'type': 'territoryAvailabilities', 'id': lid, 'attributes': {'available': True},
+        inc.append({'type': 'territoryAvailabilities', 'id': lid, 'attributes': {'available': t != 'CHN'},
                     'relationships': {'territory': {'data': {'type': 'territories', 'id': t}}}})
     call('POST', '/v2/appAvailabilities', {'data': {'type': 'appAvailabilities', 'attributes': {'availableInNewTerritories': True},
          'relationships': {'app': {'data': {'type': 'apps', 'id': APP}}, 'territoryAvailabilities': {'data': rel}}}, 'included': inc})
-    return f'{len(rel)} стран'
+    return f'{len(rel) - 1} стран, без Китая'
 
 
 app_info_loc()
