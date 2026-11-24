@@ -95,7 +95,7 @@ const isApp = (req) => process.env.ALLOW_WEB === '1' || /AhazangApp\//.test(req.
 const ADMIN_IPS = (process.env.ADMIN_IPS || '').split(/[\s,]+/).filter(Boolean);
 const ipOf = (req) => String(req.ip || req.socket.remoteAddress || '').replace(/^::ffff:/, '');
 const adminIpOk = (req) => !ADMIN_IPS.length || ADMIN_IPS.includes(ipOf(req));
-const PUBLIC_FILES = /^\/(get\.html|privacy\.html|terms\.html|logo\.png|favicon\.png|icon-\d+\.png)$/;
+const PUBLIC_FILES = /^\/(get\.html|privacy\.html|terms\.html|support\.html|logo\.png|favicon\.png|icon-\d+\.png)$/;
 app.use((req, res, next) => {
   if (req.path === '/admin.html' || req.path.startsWith('/api/admin/')) return adminIpOk(req) ? next() : res.status(404).end();
   if (isApp(req) || PUBLIC_FILES.test(req.path)) return next();

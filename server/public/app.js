@@ -1,5 +1,5 @@
 // Ahazang — клиент
-const APP_VERSION = '16';
+const APP_VERSION = '17';
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 let token = localStorage.getItem('hx_token'), me = localStorage.getItem('hx_me');
@@ -1603,7 +1603,9 @@ function infoSheet(title, html, actions) {
 }
 $('info').onclick = (e) => { if (e.target === $('info')) $('info').classList.remove('on'); };
 const listHTML = (items) => '<ul class="notes">' + items.map((x) => `<li>${esc(x)}</li>`).join('') + '</ul>';
-function showWhatsNew() { infoSheet(`Что нового в Ahazang ${APP_VERSION}`, listHTML(WHATS_NEW), [{ label: 'Понятно', primary: true }]); }
+// на iPhone не показываем пункты про танки (игра там выключена)
+const whatsNewList = () => (window.HeraxosPlatform === 'ios' ? WHATS_NEW.filter((t) => !/танк|Рубеж/i.test(t)) : WHATS_NEW);
+function showWhatsNew() { infoSheet(`Что нового в Ahazang ${APP_VERSION}`, listHTML(whatsNewList()), [{ label: 'Понятно', primary: true }]); }
 function whatsNewOnce() {
   const seen = localStorage.getItem('hx_seen_ver');
   localStorage.setItem('hx_seen_ver', APP_VERSION);
@@ -1612,7 +1614,7 @@ function whatsNewOnce() {
 $('bWhatsNew').onclick = showWhatsNew;
 function showVersionInfo() {
   const av = androidVersion();
-  $('verLine').textContent = `Ahazang · веб-версия ${APP_VERSION}` + (av ? ` · Android 1.0.${av}` : '');
+  $('verLine').textContent = `Ahazang Messenger · версия ${APP_VERSION}` + (av ? ` · Android 1.0.${av}` : '');
 }
 // Android-приложение: проверяем выпуск на GitHub (раз в 6 часов) и показываем, что изменилось
 function releaseNotes(body) {
