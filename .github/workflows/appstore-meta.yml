@@ -1,0 +1,34 @@
+name: App Store → заполнить карточку
+
+# Запуск вручную: Actions → «App Store → заполнить карточку» → Run workflow.
+# Заполняет название, описание, ключевые слова, скриншоты, возрастной рейтинг, сведения для проверяющего,
+# цену (бесплатно) и страны (без Китая) через App Store Connect API. Нужны те же секреты, что для TestFlight,
+# и APPREVIEW_PASSWORDS ("appreview1:пароль appreview2:пароль").
+
+on:
+  workflow_dispatch:
+
+jobs:
+  fill:
+    runs-on: ubuntu-latest
+    env:
+      KID: ${{ secrets.ASC_KEY_ID }}
+      ISS: ${{ secrets.ASC_ISSUER_ID }}
+      P8: ${{ secrets.ASC_KEY_P8 }}
+      APPREVIEW_PASSWORDS: ${{ secrets.APPREVIEW_PASSWORDS }}
+      REVIEW_PHONE: ${{ secrets.REVIEW_PHONE }}
+      REVIEW_FIRST: ${{ secrets.REVIEW_FIRST }}
+      REVIEW_LAST: ${{ secrets.REVIEW_LAST }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ключ App Store Connect
+        run: |
+          KID=$(printf '%s' "$KID" | tr -d ' \r\n\t'); echo "KEY_ID=$KID" >> "$GITHUB_ENV"
+          ISS=$(printf '%s' "$ISS" | tr -d ' \r\n\t'); echo "ISSUER_ID=$ISS" >> "$GITHUB_ENV"
+          BODY=$(printf '%s' "$P8" | tr -d '\r' | sed -e 's/-----BEGIN PRIVATE KEY-----//g' -e 's/-----END PRIVATE KEY-----//g' | tr -d ' \n\t')
+          mkdir -p "$RUNNER_TEMP/k"
+          { echo "-----BEGIN PRIVATE KEY-----"; printf '%s' "$BODY" | fold -w 64; echo; echo "-----END PRIVATE KEY-----"; } > "$RUNNER_TEMP/k/key.p8"
+          echo "KEYPATH=$RUNNER_TEMP/k/key.p8" >> "$GITHUB_ENV"
+      - run: pip install -q pyjwt cryptography requests
+      - name: Заполнить карточку
+        run: python3 scripts/asc_fill.py
