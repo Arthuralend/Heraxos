@@ -14,6 +14,9 @@
     nardy: { title: 'Нарды', sub: 'Длинные нарды: кубики, голова, выброс — до 15 шашек', ai: true },
     tanks: { title: 'Танчики 3D', sub: 'Защитите штаб от вражеских танков — одиночная игра', ai: false, solo: true, soloOnly: true },
   };  // «Танчики 3D» на iPhone выключены (версия для App Store) — только Android
+  // игры из отдельных файлов (games-sea.js, games-durak.js, games-erudit.js) регистрируются в window.HXG
+  const EXT = window.HXG || {};
+  for (const [k, g] of Object.entries(EXT)) GAMES_ALL[k] = { title: g.title, sub: g.sub, ai: true };
   const GAMES = Object.fromEntries(Object.entries(GAMES_ALL).filter(([k]) => !(k === 'tanks' && window.HeraxosPlatform === 'ios')));
 
 
@@ -34,6 +37,8 @@
     nardy: `<svg viewBox="0 0 100 100" class="art"><rect x="8" y="8" width="84" height="84" rx="10" fill="#8a5a3c"/><rect x="13" y="13" width="74" height="74" rx="6" fill="#e9d8bf"/><path d="M15 15h9l-4.5 30zM28 15h9l-4.5 30zM41 15h9l-4.5 30zM54 15h9l-4.5 30zM67 15h9l-4.5 30zM15 85h9l-4.5-30zM28 85h9l-4.5-30zM41 85h9l-4.5-30zM54 85h9l-4.5-30zM67 85h9l-4.5-30z" fill="#c96442" opacity=".85"/><rect x="44" y="40" width="18" height="18" rx="4" fill="#fff" stroke="#2b2a27" stroke-width="1.5"/><circle cx="49" cy="45" r="2" fill="#2b2a27"/><circle cx="57" cy="53" r="2" fill="#2b2a27"/><rect x="64" y="46" width="18" height="18" rx="4" fill="#fff" stroke="#2b2a27" stroke-width="1.5"/><circle cx="68.5" cy="50.5" r="2" fill="#2b2a27"/><circle cx="73" cy="55" r="2" fill="#2b2a27"/><circle cx="77.5" cy="59.5" r="2" fill="#2b2a27"/><circle cx="24" cy="50" r="7" fill="#2b2a27"/><circle cx="34" cy="50" r="7" fill="#f7f1e6" stroke="#2b2a27" stroke-width="1.2"/></svg>`,
     tanks: `<svg viewBox="0 0 100 100" class="art"><rect x="8" y="8" width="84" height="84" rx="10" fill="#2b2a27"/><rect x="14" y="62" width="72" height="10" fill="#a0522d" opacity=".9"/><rect x="14" y="74" width="72" height="10" fill="#8a4626" opacity=".9"/><g transform="translate(50 46)"><rect x="-24" y="-18" width="10" height="36" rx="3" fill="#5a4a3f"/><rect x="14" y="-18" width="10" height="36" rx="3" fill="#5a4a3f"/><rect x="-15" y="-14" width="30" height="28" rx="4" fill="#d97757"/><rect x="-9" y="-9" width="18" height="18" rx="5" fill="#c96442"/><rect x="-2.5" y="-32" width="5" height="24" rx="2" fill="#f2e8da"/></g></svg>`,
   };
+
+  for (const [k, g] of Object.entries(EXT)) ART[k] = g.art;
 
   // ---------- звук (короткие синтезированные щелчки) ----------
   let ac = null;
@@ -298,6 +303,7 @@
     if (sess.kind === 'chess') S.ctrl = boardGame(sess, 'chess');
     else if (sess.kind === 'checkers') S.ctrl = boardGame(sess, 'checkers');
     else if (sess.kind === 'nardy') S.ctrl = nardyGame(sess);
+    else if (EXT[sess.kind]) S.ctrl = EXT[sess.kind].start(sess, gameAPI(sess));
     else if (sess.kind === 'tanks') startTanks(sess);
   }
 
@@ -946,6 +952,67 @@
     render();
     if (!sess.peer && st.t !== my) setTimeout(aiTurn, 800);
     return ctrl;
+  }
+
+  // =====================================================================
+  // Каркас для игр из отдельных файлов
+  // =====================================================================
+  function gameAPI(sess) {
+    const oppName = sess.peer ? dn(sess.peer) : `Компьютер · ${['', 'легко', 'средне', 'сложно'][sess.ai] || ''}`;
+    const api = {
+      root, me, oppName, beep, sndMove, sndCap, sndEnd,
+      send: (o) => gsend(o, sess),
+      /** Экран игры: шапка, два окошка видео, поле игры и кнопки снизу */
+      frame(title, mainHTML, footHTML = '') {
+        show(`<header class="g-head"><button class="iconbtn" data-x="back"><svg><use href="#i-back"/></svg></button><h2>${title}</h2><span></span></header>
+          <div class="g-play gx">
+            <div class="g-duo">${playerBar('opp', sess.peer || '', oppName)}${playerBar('me', me, 'Вы')}</div>
+            <div class="gx-main">${mainHTML}<div class="g-over" hidden></div></div>
+            <div class="g-acts gx-foot">${footHTML}</div>
+          </div>`);
+        if (!sess.peer) { const a = root.querySelector('.g-bar[data-who=opp] .vslot'); a.innerHTML = '<div class="ava g-solo">🤖</div>'; }
+        root.querySelector('[data-x=back]').onclick = askLeave;
+        camButton();
+        return root;
+      },
+      /** Подсветка, чей ход, и подписи под окошками */
+      bars(turn, meSt = '', oppSt = '', meCaps = '', oppCaps = '') {
+        const b = { opp: root.querySelector('.g-bar[data-who=opp]'), me: root.querySelector('.g-bar[data-who=me]') };
+        if (!b.me) return;
+        b.me.classList.toggle('turn', turn === 'me'); b.opp.classList.toggle('turn', turn === 'opp');
+        b.me.querySelector('.g-st').textContent = meSt; b.opp.querySelector('.g-st').textContent = oppSt;
+        b.me.querySelector('.g-caps').innerHTML = meCaps; b.opp.querySelector('.g-caps').innerHTML = oppCaps;
+      },
+      /** Итог партии */
+      over(res, why = '') {
+        sess.finished = true;
+        const won = res === 'win', draw = res === 'draw';
+        if (won || draw) sndEnd(); else beep(220, 0.3, 'sine', 0.1);
+        const box = root.querySelector('.g-over'); if (!box) return;
+        box.hidden = false;
+        box.innerHTML = `<div class="g-over-card"><div class="g-res">${draw ? '🤝' : won ? '🏆' : '🏳️'}</div>
+          <h3>${draw ? 'Ничья' : won ? 'Вы победили!' : 'Вы проиграли'}</h3><p class="mute">${why}</p>
+          <div class="g-over-acts"><button class="btn" data-x="again">${sess.peer ? 'Реванш' : 'Ещё партию'}</button><button class="btn ghost" data-x="out">Выйти</button></div></div>`;
+        box.querySelector('[data-x=out]').onclick = () => { leaveGame(false); openHub(''); };
+        box.querySelector('[data-x=again]').onclick = () => {
+          const peer = sess.peer, kind = sess.kind, color = sess.color === 'w' ? 'b' : 'w';
+          leaveGame(false);
+          if (peer) invite(kind, peer, color);
+          else startGame({ id: rid(), kind, peer: '', ai: sess.ai, color, host: true });
+        };
+      },
+      restart() { leaveGame(false); startGame({ id: rid(), kind: sess.kind, peer: '', ai: sess.ai, color: sess.color, host: true }); },
+      resign(onYes) { infoSheet('Сдаться?', '', [{ label: 'Сдаться', danger: true, on: onYes }, { label: 'Играть дальше', primary: true }]); },
+      /** Одинаковые случайные числа у обоих игроков (из общего зерна) */
+      rng(seed) { let a = seed >>> 0; return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; },
+      shuffle(arr, rnd) { for (let i = arr.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [arr[i], arr[j]] = [arr[j], arr[i]]; } return arr; },
+      /** Плавный перелёт элемента из старого места в новое (FLIP) */
+      fly(el, fromRect, ms = 260) {
+        if (!el || !fromRect) return; const to = el.getBoundingClientRect();
+        try { el.animate([{ transform: `translate(${fromRect.left - to.left}px,${fromRect.top - to.top}px) scale(${fromRect.width / (to.width || 1)})` }, { transform: 'none' }], { duration: ms, easing: 'cubic-bezier(.2,.8,.2,1)' }); } catch {}
+      },
+    };
+    return api;
   }
 
   // =====================================================================
