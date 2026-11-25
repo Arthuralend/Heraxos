@@ -26,6 +26,9 @@ final class CallViewController: UIViewController {
 
     private var renderers: [String: (RTCMTLVideoView, RTCVideoTrack)] = [:]
     private var localTrack: RTCVideoTrack?
+    private var localTop: NSLayoutConstraint!
+    private var localTrail: NSLayoutConstraint!
+    private var dragStart = CGPoint.zero
     private var gridKey = "-"
     private var hidden = false
     private var timer: Timer?
@@ -74,10 +77,12 @@ final class CallViewController: UIViewController {
         local.layer.cornerRadius = 14; local.clipsToBounds = true
         local.isHidden = true
         local.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(flip)))
+        local.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(dragLocal(_:))))
         add(local)
+        localTop = local.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8)
+        localTrail = local.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -14)
         NSLayoutConstraint.activate([
-            local.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
-            local.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -14),
+            localTop, localTrail,
             local.widthAnchor.constraint(equalToConstant: 104), local.heightAnchor.constraint(equalToConstant: 150),
         ])
 
@@ -174,6 +179,27 @@ final class CallViewController: UIViewController {
         }
     }
     @objc private func flip() { CallEngine.shared.flipCamera() }
+
+    /// окошко своей камеры: тянется пальцем и прилипает к ближайшему углу, как в WhatsApp
+    @objc private func dragLocal(_ g: UIPanGestureRecognizer) {
+        let t = g.translation(in: view)
+        switch g.state {
+        case .began: dragStart = CGPoint(x: localTrail.constant, y: localTop.constant)
+        case .changed:
+            localTrail.constant = dragStart.x + t.x
+            localTop.constant = dragStart.y + t.y
+        case .ended, .cancelled:
+            let safe = view.safeAreaLayoutGuide.layoutFrame
+            let leftX = -(view.bounds.width - local.bounds.width - 14)
+            let bottomY = safe.height - local.bounds.height - 190   // над кнопками звонка
+            let v = g.velocity(in: view)
+            let px = localTrail.constant + v.x * 0.15, py = localTop.constant + v.y * 0.15
+            localTrail.constant = px < (leftX - 14) / 2 ? leftX : -14
+            localTop.constant = py > bottomY / 2 ? bottomY : 8
+            UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.8, initialSpringVelocity: 0.5) { self.view.layoutIfNeeded() }
+        default: break
+        }
+    }
     @objc private func mute() { CallManager.shared.requestMute(!CallEngine.shared.muted) }
     @objc private func hang() { CallManager.shared.requestEnd() }
     @objc private func minimize() { dismiss(animated: true) }

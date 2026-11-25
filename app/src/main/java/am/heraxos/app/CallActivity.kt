@@ -134,6 +134,36 @@ class CallActivity : Activity(), CallEngine.Listener {
     }
 
     // ------------------------------------------------------------------
+    /** Окошко своей камеры: тянется пальцем и прилипает к ближайшему углу (как в WhatsApp); касание — сменить камеру */
+    @android.annotation.SuppressLint("ClickableViewAccessibility")
+    private fun makeDraggable(v: View) {
+        val slop = android.view.ViewConfiguration.get(this).scaledTouchSlop
+        var sx = 0f; var sy = 0f; var tx = 0f; var ty = 0f; var moved = false
+        v.setOnTouchListener { _, e ->
+            when (e.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN -> { sx = e.rawX; sy = e.rawY; tx = v.translationX; ty = v.translationY; moved = false; v.animate().cancel() }
+                android.view.MotionEvent.ACTION_MOVE -> {
+                    val dx = e.rawX - sx; val dy = e.rawY - sy
+                    if (!moved && Math.hypot(dx.toDouble(), dy.toDouble()) > slop) moved = true
+                    if (moved) { v.translationX = tx + dx; v.translationY = ty + dy }
+                }
+                android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                    if (!moved) { if (e.actionMasked == android.view.MotionEvent.ACTION_UP) v.performClick() }
+                    else {
+                        val p = v.parent as View
+                        val minX = -(p.width - v.width - dp(28)).toFloat()          // левый край (вид прижат справа)
+                        val maxY = (p.height - v.height - dp(44) - dp(200)).toFloat() // над кнопками звонка
+                        val nx = if (v.translationX < minX / 2) minX else 0f
+                        val ny = if (v.translationY > maxY / 2) maxY else 0f
+                        v.animate().translationX(nx).translationY(ny).setDuration(220)
+                            .setInterpolator(android.view.animation.DecelerateInterpolator()).start()
+                    }
+                }
+            }
+            true
+        }
+    }
+
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
     private fun build() {
@@ -172,6 +202,7 @@ class CallActivity : Activity(), CallEngine.Listener {
             setOnClickListener { CallEngine.flipCamera() }
         }
         root.addView(local, FrameLayout.LayoutParams(dp(104), dp(150), Gravity.TOP or Gravity.END).apply { topMargin = dp(44); marginEnd = dp(14) })
+        makeDraggable(local)
 
         bAdd = roundButton(R.drawable.ic_addp, 0x33FFFFFF, 46) { addParticipant() }
         root.addView(bAdd, FrameLayout.LayoutParams(dp(46), dp(46), Gravity.TOP or Gravity.START).apply { topMargin = dp(44); marginStart = dp(14) })
