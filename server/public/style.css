@@ -601,3 +601,6 @@ html.is-android .androidOnly{display:flex!important}
 .nb-wait{font-size:14px;background:rgba(255,255,255,.6);padding:5px 10px;border-radius:10px}
 .nb-tray{display:inline-flex;align-items:center;gap:5px;font-size:12.5px;color:var(--mute)}
 .nb-tray .ck{width:14px;margin:0;box-shadow:0 1px 0 rgba(0,0,0,.35)}
+.nb-throw{position:absolute;inset:0;z-index:4;pointer-events:none;overflow:hidden;border-radius:12px}
+.nb-td{position:absolute;left:0;top:0;will-change:transform}
+.nb-td .die{width:100%;height:100%;padding:16%;gap:6%;border-radius:22%;box-shadow:0 4px 10px rgba(0,0,0,.35),inset 0 -3px 0 rgba(0,0,0,.08)}
