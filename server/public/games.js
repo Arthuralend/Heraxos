@@ -145,13 +145,10 @@
       case 'invite': {
         // идущая партия с другим — «занят»; законченная (экран итога) не мешает реваншу
         if ((S && !S.finished && KK(S.peer) !== KK(from)) || waiting || (GAMES[m.game] || {}).soloOnly || !GAMES[m.game]) return send({ type: 'game', to: from, g: m.g, k: 'decline', reason: 'busy' });
-        incoming = m;
+        incoming = m; m.ts = Date.now(); blinkSync();
         try { navigator.vibrate && navigator.vibrate([80, 60, 80]); } catch {}
         beep(700, 0.12); setTimeout(() => beep(900, 0.14), 140);
-        infoSheet(`${dn(from)} приглашает сыграть`, `<div class="g-invite">${ART[m.game] || ''}<b>${esc((GAMES[m.game] || {}).title || 'Игра')}</b></div>`, [
-          { label: 'Играть', primary: true, on: () => acceptInvite(m) },
-          { label: 'Отказаться', on: () => { send({ type: 'game', to: from, g: m.g, k: 'decline' }); incoming = null; } },
-        ]);
+        showIncoming();
         // если сейчас открыт экран звонка — приложение покажет приглашение поверх него
         call0('gameInvite', dn(from), (GAMES[m.game] || {}).title || 'Игра');
         return;
@@ -217,6 +214,15 @@
     }
   };
 
+  function showIncoming() {
+    const m = incoming; if (!m) return; const from = m.from;
+    infoSheet(`${dn(from)} приглашает сыграть`, `<div class="g-invite">${ART[m.game] || ''}<b>${esc((GAMES[m.game] || {}).title || 'Игра')}</b></div>`, [
+      { label: 'Играть', primary: true, on: () => acceptInvite(m) },
+      { label: 'Отказаться', on: () => { send({ type: 'game', to: from, g: m.g, k: 'decline' }); incoming = null; blinkSync(); } },
+    ]);
+  }
+  window.hxIncomingInvite = () => { if (incoming && Date.now() - incoming.ts < BLINK_CHAT) { showIncoming(); return true; } incoming = null; return false; };
+
   // ответ на приглашение с экрана звонка (кнопки в приложении)
   window.hxGameAnswer = (yes) => {
     const m = incoming; if (!m) return;
@@ -249,7 +255,8 @@
   const BLINK_CHAT = 10 * 60e3; // приглашение из чата мигает первые 10 минут
   function blinkSync() {
     const chat = Object.values(openInvites()).some((v) => Date.now() - v.ts < BLINK_CHAT);
-    const on = !!waiting || (chat && !(S && !S.finished));
+    const inc = !!(incoming && Date.now() - incoming.ts < BLINK_CHAT && !(S && !S.finished));
+    const on = inc || !!waiting || (chat && !(S && !S.finished));
     for (const id of ['bGames', 'bGameChat']) { const b = $(id); if (b) b.classList.toggle('g-blink', on); }
   }
   setInterval(blinkSync, 1500);
@@ -284,6 +291,7 @@
 
   // ---------- общая игра ----------
   function startGame(sess) {
+    incoming = null;
     S = sess;
     if (sess.kind === 'chess') S.ctrl = boardGame(sess, 'chess');
     else if (sess.kind === 'checkers') S.ctrl = boardGame(sess, 'checkers');

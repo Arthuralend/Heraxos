@@ -1,5 +1,5 @@
 // Ahazang — клиент
-const APP_VERSION = '19';
+const APP_VERSION = '20';
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 let token = localStorage.getItem('hx_token'), me = localStorage.getItem('hx_me');
@@ -1649,4 +1649,4 @@ async function checkAppUpdate(manual) {
 
 // ---------- старт ----------
 if (token && me) start(); else $('auth').classList.add('on');
-$('bGames').onclick = () => window.hxGames && hxGames('');
+$('bGames').onclick = () => { if (window.hxIncomingInvite && hxIncomingInvite()) return; window.hxGames && hxGames(''); };
