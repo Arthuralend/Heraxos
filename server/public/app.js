@@ -1,5 +1,5 @@
 // Ahazang — клиент
-const APP_VERSION = '22';
+const APP_VERSION = '23';
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 let token = localStorage.getItem('hx_token'), me = localStorage.getItem('hx_me');
@@ -517,6 +517,7 @@ $('bGameChat').onclick = () => {
   infoSheet('Пригласить сыграть', `<p class="mute">${esc(dn(peer))} получит приглашение в чате — игра начнётся, когда он(а) нажмёт «Играть».</p>`, [
     { label: '♞ Шахматы', primary: true, on: () => hxChatInvite(peer, 'chess') },
     { label: '⛀ Шашки', on: () => hxChatInvite(peer, 'checkers') },
+    { label: '🎲 Нарды', on: () => hxChatInvite(peer, 'nardy') },
     { label: 'Отмена' },
   ]);
 };
