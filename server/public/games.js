@@ -673,7 +673,7 @@
     const my = sess.color, opp = my === 'w' ? 'b' : 'w';
     let st = N.start();
     let n = 0;                      // номер хода в партии (для сети)
-    let dice = null, left = [], head = 0, hl = 1, made = [], steps = [], sel = -1, over = null, destroyed = false, busy = false;
+    let dice = null, left = [], head = 0, hl = 1, made = [], steps = [], sel = -1, over = null, destroyed = false, busy = false, rolling = false, anim = 0;
     const oppName = sess.peer ? dn(sess.peer) : `Компьютер · ${['', 'легко', 'средне', 'сложно'][sess.ai] || ''}`;
 
     show(`<header class="g-head"><button class="iconbtn" data-x="back"><svg><use href="#i-back"/></svg></button><h2>Нарды</h2><span></span></header>
@@ -722,12 +722,13 @@
       const canOff = targets.some((m) => m.t >= 24);
       let mid = '';
       if (over) mid = '';
-      else if (st.t === my && !dice) mid = `<button class="nb-roll" data-x="roll">${pipFace(5)}${pipFace(2)}<span>Бросить</span></button>`;
+      else if (rolling) mid = '';
+      else if (st.t === my && !dice) mid = `<button class="nb-roll" data-x="roll">${pipFace(5)}${pipFace(2)}<span>Смахните кости</span></button>`;
       else if (dice) mid = `<div class="nb-dice">${diceList(dice).map((v, k) => `<span class="${k < diceList(dice).length - left.length ? 'used' : ''}">${pipFace(v)}</span>`).join('')}</div>`;
       else mid = `<div class="nb-wait mute">${sess.peer ? 'Ход соперника' : 'Компьютер ходит…'}</div>`;
       h += `<div class="nb-mid">${mid}${canOff ? '<button class="nb-off" data-x="off">Выбросить ⤴</button>' : ''}</div><div class="nb-bar" style="grid-row:1/4;grid-column:7"></div>`;
       board.innerHTML = h;
-      const rb = board.querySelector('[data-x=roll]'); if (rb) rb.onclick = roll;
+      const rb = board.querySelector('[data-x=roll]'); if (rb) rb.onclick = () => roll(null);
       const ob = board.querySelector('[data-x=off]'); if (ob) ob.onclick = () => doStep(targets.find((m) => m.t >= 24));
       renderBars();
     }
@@ -745,14 +746,76 @@
       root.querySelector('.g-moves').innerHTML = `<span class="mute">${my === 'w' ? 'Вы — белые, ходите первым' : 'Вы — чёрные'} · дом справа внизу</span>`;
     }
 
-    function roll() {
-      if (st.t !== my || dice || over) return;
-      startTurn([1 + Math.floor(Math.random() * 6), 1 + Math.floor(Math.random() * 6)]);
-      if (sess.peer) gsend({ k: 'roll', n: n + 1, dice });
-      beep(380, 0.05, 'square', 0.05); setTimeout(() => beep(460, 0.05, 'square', 0.05), 70);
-      render();
-      if (!legalNow().length) { toast('Ходов нет — ход переходит сопернику', 1800); busy = true; setTimeout(() => { busy = false; endTurn(); }, 1300); }
+    // ---------- бросок костей: летят по доске, отскакивают от бортов и останавливаются ----------
+    const randThrow = (fromMe) => ({ x: 0.3 + Math.random() * 0.4, y: fromMe ? 0.85 : 0.15, vx: (Math.random() - 0.5) * 1.6, vy: (fromMe ? -1 : 1) * (1.4 + Math.random() * 0.8) });
+    function throwDice(values, th, done) {
+      const id = ++anim;
+      rolling = true; render();
+      const wrap = root.querySelector('.nb-wrap'), W = wrap.clientWidth, H = wrap.clientHeight, S = Math.max(34, W * 0.1);
+      const layer = document.createElement('div'); layer.className = 'nb-throw'; wrap.appendChild(layer);
+      const ds = values.map((v, k) => {
+        const el = document.createElement('div'); el.className = 'nb-td'; el.style.width = el.style.height = S + 'px'; layer.appendChild(el);
+        const spread = (k ? 1 : -1) * 0.06;
+        return { el, v, x: th.x * W + spread * W, y: th.y * H, vx: (th.vx + spread * 2 + (Math.random() - 0.5) * 0.3) * W, vy: (th.vy + (Math.random() - 0.5) * 0.3) * H, a: Math.random() * 360, va: (Math.random() > 0.5 ? 1 : -1) * (500 + Math.random() * 500), face: 1, t: 0 };
+      });
+      const face = (d, v) => { d.face = v; d.el.innerHTML = pipFace(v); };
+      ds.forEach((d) => face(d, 1 + Math.floor(Math.random() * 6)));
+      let last = performance.now(), t0 = last, clack = 0;
+      const step = (now) => {
+        if (id !== anim || destroyed) { layer.remove(); return; }
+        const dt = Math.min(0.033, (now - last) / 1000); last = now;
+        let moving = false;
+        for (const d of ds) {
+          d.x += d.vx * dt; d.y += d.vy * dt; d.a += d.va * dt;
+          const r = S / 2;
+          if (d.x < r) { d.x = r; d.vx = Math.abs(d.vx) * 0.7; d.va *= -0.8; if (now - clack > 60) { beep(300 + Math.random() * 200, 0.03, 'square', 0.04); clack = now; } }
+          if (d.x > W - r) { d.x = W - r; d.vx = -Math.abs(d.vx) * 0.7; d.va *= -0.8; if (now - clack > 60) { beep(300 + Math.random() * 200, 0.03, 'square', 0.04); clack = now; } }
+          if (d.y < r) { d.y = r; d.vy = Math.abs(d.vy) * 0.7; if (now - clack > 60) { beep(340, 0.03, 'square', 0.04); clack = now; } }
+          if (d.y > H - r) { d.y = H - r; d.vy = -Math.abs(d.vy) * 0.7; if (now - clack > 60) { beep(340, 0.03, 'square', 0.04); clack = now; } }
+          const fr = Math.pow(0.18, dt); d.vx *= fr; d.vy *= fr; d.va *= Math.pow(0.12, dt);
+          const sp = Math.hypot(d.vx, d.vy);
+          if (sp > W * 0.12 || now - t0 < 450) { moving = true; d.t += dt; if (d.t > 0.07) { d.t = 0; face(d, 1 + Math.floor(Math.random() * 6)); } }
+          else if (d.face !== d.v) face(d, d.v);
+          d.el.style.transform = `translate(${d.x - r}px,${d.y - r}px) rotate(${d.a}deg)`;
+        }
+        // кости не проходят сквозь друг друга
+        const [a, b] = ds, dx = b.x - a.x, dy = b.y - a.y, dist = Math.hypot(dx, dy);
+        if (dist < S && dist > 0) { const push = (S - dist) / 2, nx = dx / dist, ny = dy / dist; a.x -= nx * push; a.y -= ny * push; b.x += nx * push; b.y += ny * push; }
+        if (moving && now - t0 < 2600) return requestAnimationFrame(step);
+        ds.forEach((d) => { face(d, d.v); d.el.style.transition = 'transform .25s'; d.el.style.transform = `translate(${d.x - S / 2}px,${d.y - S / 2}px) rotate(${Math.round(d.a / 90) * 90}deg)`; });
+        setTimeout(() => { if (id !== anim) return; layer.remove(); rolling = false; done(); }, 380);
+      };
+      requestAnimationFrame(step);
     }
+    function cancelThrow() { anim++; rolling = false; root.querySelectorAll('.nb-throw').forEach((e) => e.remove()); }
+
+    function roll(th) {
+      if (st.t !== my || dice || over || rolling) return;
+      const vals = [1 + Math.floor(Math.random() * 6), 1 + Math.floor(Math.random() * 6)];
+      th = th || randThrow(true);
+      if (sess.peer) gsend({ k: 'roll', n: n + 1, dice: vals, th });
+      throwDice(vals, th, () => {
+        startTurn(vals); render();
+        if (!legalNow().length) { toast('Ходов нет — ход переходит сопернику', 1800); busy = true; setTimeout(() => { busy = false; endTurn(); }, 1300); }
+      });
+    }
+
+    // смахивание по доске — бросок в эту сторону
+    let swipe = null;
+    board.addEventListener('pointerdown', (e) => {
+      if (st.t !== my || dice || over || rolling) return;
+      const r = board.getBoundingClientRect();
+      swipe = { x: e.clientX, y: e.clientY, t: performance.now(), r };
+    });
+    board.addEventListener('pointerup', (e) => {
+      const sw = swipe; swipe = null; if (!sw) return;
+      const dx = e.clientX - sw.x, dy = e.clientY - sw.y, dt = Math.max(40, performance.now() - sw.t);
+      if (Math.hypot(dx, dy) < 30) return;
+      const k = 1000 / dt;
+      const clamp = (v) => Math.max(-3.2, Math.min(3.2, v));
+      roll({ x: Math.min(0.9, Math.max(0.1, (sw.x - sw.r.left) / sw.r.width)), y: Math.min(0.9, Math.max(0.1, (sw.y - sw.r.top) / sw.r.height)),
+        vx: clamp((dx / sw.r.width) * k * 0.9), vy: clamp((dy / sw.r.height) * k * 0.9) });
+    });
     function startTurn(d) { dice = d; left = diceList(d); head = 0; hl = N.headLimitFor(st, d); made = []; steps = []; sel = -1; }
 
     function doStep(m) {
@@ -778,7 +841,12 @@
 
     function aiTurn() {
       if (destroyed || over || st.t === my) return;
-      startTurn([1 + Math.floor(Math.random() * 6), 1 + Math.floor(Math.random() * 6)]);
+      const vals = [1 + Math.floor(Math.random() * 6), 1 + Math.floor(Math.random() * 6)];
+      throwDice(vals, randThrow(false), () => aiPlay(vals));
+    }
+    function aiPlay(vals) {
+      if (destroyed || over || st.t === my) return;
+      startTurn(vals);
       render();
       const seq = N.bestSeq(st, dice, sess.ai || 2);
       let k = 0;
@@ -799,6 +867,7 @@
     function applyRemote(m) {
       if (m.n <= n) return;
       if (m.n !== n + 1 || st.t === my) return gsend({ k: 'sync?' });
+      cancelThrow();
       startTurn(m.dice);
       for (const [f, t, d] of m.steps || []) {
         const fromA = N.toAbs(st.t, f), a = fromA;
@@ -859,14 +928,20 @@
 
     const ctrl = {
       onNet(m) {
-        if (m.k === 'roll' && m.n === n + 1 && st.t !== my && Array.isArray(m.dice)) { dice = m.dice; left = diceList(m.dice); steps = []; render(); }
+        if (m.k === 'roll' && m.n === n + 1 && st.t !== my && Array.isArray(m.dice)) {
+          const vals = m.dice, t = m.th || randThrow(false);
+          // у соперника доска повёрнута на 180° — зеркалим бросок
+          const th = { x: 1 - (+t.x || 0.5), y: 1 - (+t.y || 0.5), vx: -(+t.vx || 0), vy: -(+t.vy || 0) };
+          steps = [];
+          throwDice(vals, th, () => { if (st.t !== my && n + 1 === m.n) { dice = vals; left = diceList(vals); render(); } });
+        }
         else if (m.k === 'move') applyRemote(m);
         else if (m.k === 'sync?') gsend({ k: 'state', n, st });
         else if (m.k === 'state' && m.st && m.n > n) { st = m.st; n = m.n; dice = null; left = []; made = []; steps = []; render(); const o = N.outcome(st); if (o) finish(o); }
         else if (m.k === 'resign' && !over) finish({ result: my, reason: 'resign' });
       },
       peerLeft() { if (!over) finish({ result: my, reason: 'left' }); },
-      destroy() { destroyed = true; },
+      destroy() { destroyed = true; anim++; },
     };
     render();
     if (!sess.peer && st.t !== my) setTimeout(aiTurn, 800);
