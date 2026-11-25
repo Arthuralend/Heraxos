@@ -1,4 +1,4 @@
-// Ahazang — игры: шахматы, шашки и танки «Рубеж». Вдвоём (в том числе во время звонка — видно друг друга)
+// Ahazang — игры: шахматы, шашки, нарды и танки «Рубеж». Вдвоём (в том числе во время звонка — видно друг друга)
 // или с компьютером. Ходы идут через сервер сообщениями type: 'game'.
 (() => {
   'use strict';
@@ -11,6 +11,7 @@
   const GAMES_ALL = {
     chess: { title: 'Шахматы', sub: 'Классика: мат, пат, рокировка, взятие на проходе', ai: true },
     checkers: { title: 'Шашки', sub: 'Русские шашки: бить обязательно, дамка ходит далеко', ai: true },
+    nardy: { title: 'Нарды', sub: 'Длинные нарды: кубики, голова, выброс — до 15 шашек', ai: true },
     tanks: { title: 'Танчики 3D', sub: 'Защитите штаб от вражеских танков — одиночная игра', ai: false, solo: true, soloOnly: true },
   };  // «Танчики 3D» на iPhone выключены (версия для App Store) — только Android
   const GAMES = Object.fromEntries(Object.entries(GAMES_ALL).filter(([k]) => !(k === 'tanks' && window.HeraxosPlatform === 'ios')));
@@ -30,6 +31,7 @@
   const ART = {
     chess: `<svg viewBox="0 0 100 100" class="art"><rect x="8" y="8" width="84" height="84" rx="10" fill="#c7a07f"/><path d="M8 8h21v21H8zm42 0h21v21H50zM29 29h21v21H29zm42 0h21v21H71zM8 50h21v21H8zm42 0h21v21H50zM29 71h21v21H29zm42 0h21v21H71z" fill="#f2e8da"/><g transform="translate(22 14) scale(.58)" class="pc w">${PIECE.n}</g></svg>`,
     checkers: `<svg viewBox="0 0 100 100" class="art"><rect x="8" y="8" width="84" height="84" rx="10" fill="#f2e8da"/><path d="M29 8h21v21H29zm42 0h21v21H71zM8 29h21v21H8zm42 0h21v21H50zM29 50h21v21H29zm42 0h21v21H71zM8 71h21v21H8zm42 0h21v21H50z" fill="#c7a07f"/><g transform="translate(12 30) scale(.45)">${discSVG('b').replace(/<\/?svg[^>]*>/g, '')}</g><g transform="translate(44 44) scale(.45)">${discSVG('W').replace(/<\/?svg[^>]*>/g, '')}</g></svg>`,
+    nardy: `<svg viewBox="0 0 100 100" class="art"><rect x="8" y="8" width="84" height="84" rx="10" fill="#8a5a3c"/><rect x="13" y="13" width="74" height="74" rx="6" fill="#e9d8bf"/><path d="M15 15h9l-4.5 30zM28 15h9l-4.5 30zM41 15h9l-4.5 30zM54 15h9l-4.5 30zM67 15h9l-4.5 30zM15 85h9l-4.5-30zM28 85h9l-4.5-30zM41 85h9l-4.5-30zM54 85h9l-4.5-30zM67 85h9l-4.5-30z" fill="#c96442" opacity=".85"/><rect x="44" y="40" width="18" height="18" rx="4" fill="#fff" stroke="#2b2a27" stroke-width="1.5"/><circle cx="49" cy="45" r="2" fill="#2b2a27"/><circle cx="57" cy="53" r="2" fill="#2b2a27"/><rect x="64" y="46" width="18" height="18" rx="4" fill="#fff" stroke="#2b2a27" stroke-width="1.5"/><circle cx="68.5" cy="50.5" r="2" fill="#2b2a27"/><circle cx="73" cy="55" r="2" fill="#2b2a27"/><circle cx="77.5" cy="59.5" r="2" fill="#2b2a27"/><circle cx="24" cy="50" r="7" fill="#2b2a27"/><circle cx="34" cy="50" r="7" fill="#f7f1e6" stroke="#2b2a27" stroke-width="1.2"/></svg>`,
     tanks: `<svg viewBox="0 0 100 100" class="art"><rect x="8" y="8" width="84" height="84" rx="10" fill="#2b2a27"/><rect x="14" y="62" width="72" height="10" fill="#a0522d" opacity=".9"/><rect x="14" y="74" width="72" height="10" fill="#8a4626" opacity=".9"/><g transform="translate(50 46)"><rect x="-24" y="-18" width="10" height="36" rx="3" fill="#5a4a3f"/><rect x="14" y="-18" width="10" height="36" rx="3" fill="#5a4a3f"/><rect x="-15" y="-14" width="30" height="28" rx="4" fill="#d97757"/><rect x="-9" y="-9" width="18" height="18" rx="5" fill="#c96442"/><rect x="-2.5" y="-32" width="5" height="24" rx="2" fill="#f2e8da"/></g></svg>`,
   };
 
@@ -295,6 +297,7 @@
     S = sess;
     if (sess.kind === 'chess') S.ctrl = boardGame(sess, 'chess');
     else if (sess.kind === 'checkers') S.ctrl = boardGame(sess, 'checkers');
+    else if (sess.kind === 'nardy') S.ctrl = nardyGame(sess);
     else if (sess.kind === 'tanks') startTanks(sess);
   }
 
@@ -659,6 +662,214 @@
     };
     render();
     if (!sess.peer && st.t !== my) setTimeout(aiMove, 500);
+    return ctrl;
+  }
+
+  // =====================================================================
+  // Длинные нарды
+  // =====================================================================
+  function nardyGame(sess) {
+    const N = window.HXNardy;
+    const my = sess.color, opp = my === 'w' ? 'b' : 'w';
+    let st = N.start();
+    let n = 0;                      // номер хода в партии (для сети)
+    let dice = null, left = [], head = 0, hl = 1, made = [], steps = [], sel = -1, over = null, destroyed = false, busy = false;
+    const oppName = sess.peer ? dn(sess.peer) : `Компьютер · ${['', 'легко', 'средне', 'сложно'][sess.ai] || ''}`;
+
+    show(`<header class="g-head"><button class="iconbtn" data-x="back"><svg><use href="#i-back"/></svg></button><h2>Нарды</h2><span></span></header>
+      <div class="g-play">
+        <div class="g-duo">${playerBar('opp', sess.peer || '', oppName)}${playerBar('me', me, 'Вы')}</div>
+        <div class="g-board-wrap nb-wrap"><div class="nb"></div><div class="g-over" hidden></div></div>
+        <div class="g-moves"></div>
+        <div class="g-acts"><button class="pill" data-x="resign">${sess.peer ? 'Сдаться' : 'Новая партия'}</button></div>
+      </div>`);
+    const board = root.querySelector('.nb');
+    if (!sess.peer) { const a = root.querySelector('.g-bar[data-who=opp] .vslot'); a.innerHTML = '<div class="ava g-solo">🤖</div>'; }
+    root.querySelector('[data-x=back]').onclick = askLeave;
+    root.querySelector('[data-x=resign]').onclick = () => {
+      if (!sess.peer) return restart(false);
+      if (over) return;
+      infoSheet('Сдаться?', '', [{ label: 'Сдаться', danger: true, on: () => { gsend({ k: 'resign' }); finish({ result: opp, reason: 'resign' }); } }, { label: 'Играть дальше', primary: true }]);
+    };
+    camButton();
+
+    // экран: верхний ряд — мои пункты 11..0 (голова справа сверху), нижний — 12..23 (дом справа снизу)
+    const cellOf = (rel) => (rel < 12 ? { row: 0, col: 11 - rel } : { row: 1, col: rel - 12 });
+    const diceList = (d) => (d[0] === d[1] ? [d[0], d[0], d[0], d[0]] : [d[0], d[1]]);
+    const pipFace = (v) => { const P = { 1: [4], 2: [0, 8], 3: [0, 4, 8], 4: [0, 2, 6, 8], 5: [0, 2, 4, 6, 8], 6: [0, 2, 3, 5, 6, 8] }[v] || []; return `<i class="die">${[...Array(9)].map((_, k) => `<b class="${P.includes(k) ? 'on' : ''}"></b>`).join('')}</i>`; };
+    const legalNow = () => (st.t === my && dice && !over && !busy ? N.nextSteps(st, left, head, hl, made.length === 0) : []);
+
+    function render() {
+      const legal = legalNow();
+      const from = new Set(legal.map((m) => m.f));
+      const targets = sel >= 0 ? legal.filter((m) => m.f === sel) : [];
+      const tset = new Set(targets.map((m) => m.t));
+      const lastTo = new Set(steps.map((m) => m.toA));
+      let h = '';
+      for (let rel = 0; rel < 24; rel++) {
+        const a = N.toAbs(my, rel), { row, col } = cellOf(rel), cnt = st.c[a], who = st.o[a];
+        let cls = 'pt ' + (row ? 'bot' : 'top') + ((rel + row) % 2 ? ' dk' : ' lt');
+        if (from.has(rel) && who === my) cls += ' can';
+        if (sel === rel) cls += ' sel';
+        if (tset.has(rel)) cls += ' tgt';
+        if (lastTo.has(a)) cls += ' last';
+        const shown = Math.min(cnt, 5);
+        let chk = '';
+        for (let k = 0; k < shown; k++) chk += `<i class="ck ${who}">${k === shown - 1 && cnt > 5 ? cnt : ''}</i>`;
+        h += `<div class="${cls}" data-r="${rel}" style="grid-row:${row ? 3 : 1};grid-column:${col < 6 ? col + 1 : col + 2}">${chk}</div>`;
+      }
+      // центр: кубики / кнопка броска / выброс
+      const canOff = targets.some((m) => m.t >= 24);
+      let mid = '';
+      if (over) mid = '';
+      else if (st.t === my && !dice) mid = `<button class="nb-roll" data-x="roll">${pipFace(5)}${pipFace(2)}<span>Бросить</span></button>`;
+      else if (dice) mid = `<div class="nb-dice">${diceList(dice).map((v, k) => `<span class="${k < diceList(dice).length - left.length ? 'used' : ''}">${pipFace(v)}</span>`).join('')}</div>`;
+      else mid = `<div class="nb-wait mute">${sess.peer ? 'Ход соперника' : 'Компьютер ходит…'}</div>`;
+      h += `<div class="nb-mid">${mid}${canOff ? '<button class="nb-off" data-x="off">Выбросить ⤴</button>' : ''}</div><div class="nb-bar" style="grid-row:1/4;grid-column:7"></div>`;
+      board.innerHTML = h;
+      const rb = board.querySelector('[data-x=roll]'); if (rb) rb.onclick = roll;
+      const ob = board.querySelector('[data-x=off]'); if (ob) ob.onclick = () => doStep(targets.find((m) => m.t >= 24));
+      renderBars();
+    }
+
+    function renderBars() {
+      const turnMine = st.t === my && !over;
+      const bars = { opp: root.querySelector('.g-bar[data-who=opp]'), me: root.querySelector('.g-bar[data-who=me]') };
+      bars.me.classList.toggle('turn', turnMine);
+      bars.opp.classList.toggle('turn', !turnMine && !over);
+      bars.me.querySelector('.g-st').textContent = over ? '' : turnMine ? (dice ? 'Ваш ход' : 'Бросайте кубики') : '';
+      bars.opp.querySelector('.g-st').textContent = over ? '' : !turnMine ? (sess.peer ? 'Ходит…' : 'Компьютер ходит…') : '';
+      const tray = (p) => `<span class="nb-tray"><i class="ck ${p}"></i>${st.off[p]}/15 · ${N.pips(st, p)} оч.</span>`;
+      bars.me.querySelector('.g-caps').innerHTML = tray(my);
+      bars.opp.querySelector('.g-caps').innerHTML = tray(opp);
+      root.querySelector('.g-moves').innerHTML = `<span class="mute">${my === 'w' ? 'Вы — белые, ходите первым' : 'Вы — чёрные'} · дом справа внизу</span>`;
+    }
+
+    function roll() {
+      if (st.t !== my || dice || over) return;
+      startTurn([1 + Math.floor(Math.random() * 6), 1 + Math.floor(Math.random() * 6)]);
+      if (sess.peer) gsend({ k: 'roll', n: n + 1, dice });
+      beep(380, 0.05, 'square', 0.05); setTimeout(() => beep(460, 0.05, 'square', 0.05), 70);
+      render();
+      if (!legalNow().length) { toast('Ходов нет — ход переходит сопернику', 1800); busy = true; setTimeout(() => { busy = false; endTurn(); }, 1300); }
+    }
+    function startTurn(d) { dice = d; left = diceList(d); head = 0; hl = N.headLimitFor(st, d); made = []; steps = []; sel = -1; }
+
+    function doStep(m) {
+      if (!m) return;
+      const fromA = N.toAbs(st.t, m.f);
+      st = N.apply(st, st.t, m);
+      if (m.f === 0) head++;
+      left.splice(left.indexOf(m.d), 1);
+      made.push(m); steps.push({ f: m.f, t: m.t, d: m.d, fromA, toA: m.t < 24 ? N.toAbs(st.t, m.t) : -1 });
+      sel = -1; sndMove();
+      const o = N.outcome(st);
+      if (o) { render(); if (st.t === my && sess.peer) gsend({ k: 'move', n: n + 1, dice, steps: made.map((x) => [x.f, x.t, x.d]) }); return finish(o); }
+      if (st.t === my && !legalNow().length) { render(); busy = true; setTimeout(() => { busy = false; endTurn(); }, 450); return; }
+      render();
+    }
+
+    function endTurn() {
+      if (st.t === my && sess.peer) gsend({ k: 'move', n: n + 1, dice, steps: made.map((x) => [x.f, x.t, x.d]) });
+      n++; st.turns[st.t]++; st.t = N.other(st.t); dice = null; left = []; made = []; sel = -1;
+      render();
+      if (!sess.peer && st.t !== my) setTimeout(aiTurn, 600);
+    }
+
+    function aiTurn() {
+      if (destroyed || over || st.t === my) return;
+      startTurn([1 + Math.floor(Math.random() * 6), 1 + Math.floor(Math.random() * 6)]);
+      render();
+      const seq = N.bestSeq(st, dice, sess.ai || 2);
+      let k = 0;
+      const next = () => {
+        if (destroyed || over) return;
+        if (k >= seq.length) return endTurn();
+        const m = seq[k++];
+        const fromA = N.toAbs(st.t, m.f);
+        st = N.apply(st, st.t, m); left.splice(left.indexOf(m.d), 1);
+        steps.push({ fromA, toA: m.t < 24 ? N.toAbs(st.t, m.t) : -1 }); sndMove(); render();
+        const o = N.outcome(st); if (o) return finish(o);
+        setTimeout(next, 420);
+      };
+      setTimeout(next, 700);
+    }
+
+    // соперник прислал весь ход
+    function applyRemote(m) {
+      if (m.n <= n) return;
+      if (m.n !== n + 1 || st.t === my) return gsend({ k: 'sync?' });
+      startTurn(m.dice);
+      for (const [f, t, d] of m.steps || []) {
+        const fromA = N.toAbs(st.t, f), a = fromA;
+        if (st.o[a] !== st.t || !st.c[a]) return gsend({ k: 'sync?' });
+        st = N.apply(st, st.t, { f, t, d });
+        steps.push({ fromA, toA: t < 24 ? N.toAbs(st.t, t) : -1 });
+      }
+      const keep = steps.slice();
+      if (m.steps && m.steps.length) sndMove();
+      const o = N.outcome(st);
+      n++; st.turns[st.t]++;
+      if (o) { render(); return finish(o); }
+      st.t = N.other(st.t); dice = null; left = []; made = []; steps = keep;
+      render();
+    }
+
+    // нажатия на пункты
+    board.addEventListener('click', (e) => {
+      const pt = e.target.closest('.pt'); if (!pt) return;
+      if (st.t !== my || !dice || over || busy) return;
+      const r = +pt.dataset.r, legal = legalNow();
+      if (sel >= 0) {
+        const ms = legal.filter((m) => m.f === sel && m.t === r);
+        if (ms.length) return doStep(ms.sort((a, b) => a.d - b.d)[0]);
+      }
+      if (legal.some((m) => m.f === r)) {
+        // если у шашки один вариант хода — ходим сразу
+        const own = legal.filter((m) => m.f === r);
+        const uniq = [...new Set(own.map((m) => m.t))];
+        if (sel === r && uniq.length === 1) return doStep(own[0]);
+        sel = r;
+      } else sel = -1;
+      render();
+    });
+
+    function finish(o) {
+      over = o; sess.finished = true;
+      const won = o.result === my;
+      const why = { mars: won ? 'Марс — соперник не успел выбросить ни одной шашки' : 'Марс', oin: '', resign: won ? 'Соперник сдался' : 'Вы сдались', left: 'Соперник вышел' }[o.reason] || '';
+      if (won) sndEnd(); else beep(220, 0.3, 'sine', 0.1);
+      const box = root.querySelector('.g-over');
+      box.hidden = false;
+      box.innerHTML = `<div class="g-over-card"><div class="g-res">${won ? '🏆' : '🏳️'}</div>
+        <h3>${won ? 'Вы победили!' : 'Вы проиграли'}</h3><p class="mute">${why}</p>
+        <div class="g-over-acts"><button class="btn" data-x="again">${sess.peer ? 'Реванш' : 'Ещё партию'}</button><button class="btn ghost" data-x="out">Выйти</button></div></div>`;
+      box.querySelector('[data-x=out]').onclick = () => { leaveGame(false); openHub(''); };
+      box.querySelector('[data-x=again]').onclick = () => {
+        if (!sess.peer) return restart(true);
+        const peer = sess.peer; leaveGame(false); invite('nardy', peer, my === 'w' ? 'b' : 'w');
+      };
+      render();
+    }
+    function restart(swap) {
+      const color = swap ? opp : my;
+      leaveGame(false);
+      startGame({ id: rid(), kind: 'nardy', peer: '', ai: sess.ai, color, host: true });
+    }
+
+    const ctrl = {
+      onNet(m) {
+        if (m.k === 'roll' && m.n === n + 1 && st.t !== my && Array.isArray(m.dice)) { dice = m.dice; left = diceList(m.dice); steps = []; render(); }
+        else if (m.k === 'move') applyRemote(m);
+        else if (m.k === 'sync?') gsend({ k: 'state', n, st });
+        else if (m.k === 'state' && m.st && m.n > n) { st = m.st; n = m.n; dice = null; left = []; made = []; steps = []; render(); const o = N.outcome(st); if (o) finish(o); }
+        else if (m.k === 'resign' && !over) finish({ result: my, reason: 'resign' });
+      },
+      peerLeft() { if (!over) finish({ result: my, reason: 'left' }); },
+      destroy() { destroyed = true; },
+    };
+    render();
+    if (!sess.peer && st.t !== my) setTimeout(aiTurn, 800);
     return ctrl;
   }
 
