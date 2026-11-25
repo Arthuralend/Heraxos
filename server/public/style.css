@@ -440,7 +440,7 @@ html.is-android .androidOnly{display:flex!important}
 .g-acts .pill{margin:0;padding:9px 15px}
 .games-btn{color:var(--brand);margin-left:-8px}
 .games-btn svg{width:26px;height:26px}
-.games-btn.g-blink{animation:gblink 1s ease-in-out infinite}
+.g-blink{animation:gblink 1s ease-in-out infinite}
 @keyframes gblink{0%,100%{color:#ff3b30;transform:scale(1.08)}50%{color:var(--brand);opacity:.45;transform:scale(1)}}
 
 /* ---------- танки «Рубеж» ---------- */

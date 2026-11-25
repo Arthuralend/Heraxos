@@ -248,9 +248,9 @@
   // мигающий красным джойстик, пока ждём ответа на своё приглашение
   const BLINK_CHAT = 10 * 60e3; // приглашение из чата мигает первые 10 минут
   function blinkSync() {
-    const b = $('bGames'); if (!b) return;
     const chat = Object.values(openInvites()).some((v) => Date.now() - v.ts < BLINK_CHAT);
-    b.classList.toggle('g-blink', !!waiting || (chat && !(S && !S.finished)));
+    const on = !!waiting || (chat && !(S && !S.finished));
+    for (const id of ['bGames', 'bGameChat']) { const b = $(id); if (b) b.classList.toggle('g-blink', on); }
   }
   setInterval(blinkSync, 1500);
 
