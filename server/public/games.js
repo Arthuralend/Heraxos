@@ -394,9 +394,8 @@
     show(`<header class="g-head"><button class="iconbtn" data-x="back"><svg><use href="#i-back"/></svg></button><h2>${title}</h2>
         <button class="iconbtn" data-x="flip" title="Повернуть доску">⇅</button></header>
       <div class="g-play">
-        ${playerBar('opp', sess.peer || '', oppName)}
+        <div class="g-duo">${playerBar('opp', sess.peer || '', oppName)}${playerBar('me', me, 'Вы')}</div>
         <div class="g-board-wrap"><div class="g-board ${type}"></div><div class="g-promo" hidden></div><div class="g-over" hidden></div></div>
-        ${playerBar('me', me, 'Вы')}
         <div class="g-moves"></div>
         <div class="g-acts">
           <button class="pill" data-x="resign">${sess.peer ? 'Сдаться' : 'Новая партия'}</button>
