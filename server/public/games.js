@@ -133,7 +133,7 @@
       if (waiting) send({ type: 'game', to: waiting.peer, g: waiting.id, k: 'cancel' });
       waiting = null; openHub(hubPeer);
     };
-    clearTimeout(invite.t);
+    clearTimeout(invite.t); blinkSync();
     invite.t = setTimeout(() => { if (waiting && waiting.id) { toast(`${dn(peer)} не ответил(а)`); send({ type: 'game', to: peer, g: waiting.id, k: 'cancel' }); waiting = null; openHub(hubPeer); } }, 60000);
   }
 
@@ -238,12 +238,21 @@
   /** Отправить приглашение сообщением в чат (и сразу всплывающим окном, если человек в приложении) */
   window.hxChatInvite = async (peer, kind) => {
     const id = rid(), o = openInvites();
-    o[id] = { kind, peer, color: 'w', ts: Date.now() }; saveInvites(o);
+    o[id] = { kind, peer, color: 'w', ts: Date.now() }; saveInvites(o); blinkSync();
     const ok = await window.hxSendChatText(peer, 'HXG1:' + JSON.stringify({ g: kind, id, c: 'w' }));
     if (!ok) return;
     if (online.has(KK(peer))) send({ type: 'game', to: peer, g: id, k: 'invite', game: kind, color: 'w' });
     toast('Приглашение отправлено — игра начнётся, когда соперник нажмёт «Играть»', 2800);
   };
+
+  // мигающий красным джойстик, пока ждём ответа на своё приглашение
+  const BLINK_CHAT = 10 * 60e3; // приглашение из чата мигает первые 10 минут
+  function blinkSync() {
+    const b = $('bGames'); if (!b) return;
+    const chat = Object.values(openInvites()).some((v) => Date.now() - v.ts < BLINK_CHAT);
+    b.classList.toggle('g-blink', !!waiting || (chat && !(S && !S.finished)));
+  }
+  setInterval(blinkSync, 1500);
 
   /** Нажали «Играть» в карточке приглашения из чата */
   let joining = null, joinT = null;
