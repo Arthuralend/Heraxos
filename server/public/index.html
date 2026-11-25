@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-title" content="Ahazang">
 <meta name="theme-color" content="#faf9f5">
 <meta name="color-scheme" content="light">
-<link rel="stylesheet" href="/style.css?v=24">
+<link rel="stylesheet" href="/style.css?v=25">
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute">
@@ -49,13 +49,13 @@
     <div class="seg"><button id="tLogin" class="on">Вход</button><button id="tReg">Регистрация</button></div>
 
     <form id="fLogin" autocomplete="on" onsubmit="return false">
-      <input id="login" name="username" placeholder="Логин или номер" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="username">
+      <input id="login" name="username" placeholder="Номер (или прежний логин)" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="username">
       <div class="pw"><input id="pass" name="password" type="password" placeholder="Пароль" autocomplete="current-password"><button type="button" class="eye" data-for="pass">👁</button></div>
       <button class="btn" id="bLogin" type="submit">Войти</button>
     </form>
 
     <form id="fReg" autocomplete="off" onsubmit="return false" hidden>
-      <input id="rLogin" placeholder="Придумайте логин" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="off" data-lpignore="true">
+      <input id="rName" placeholder="Ваше имя" maxlength="40" autocomplete="off" data-lpignore="true">
       <div class="pw"><input id="rPass" type="text" class="secret" placeholder="Придумайте пароль (от 6 символов)" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="off" data-lpignore="true"><button type="button" class="eye" data-for="rPass">👁</button></div>
       <div class="pw"><input id="rPass2" type="text" class="secret" placeholder="Повторите пароль" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="off" data-lpignore="true"></div>
       <input id="rNum" placeholder="Желаемый номер — 6 цифр (необязательно)" inputmode="numeric" maxlength="7" autocomplete="off">
@@ -94,7 +94,7 @@
     <div class="tab-page" data-tab="settings">
       <header class="bighead"><h2>Настройки</h2></header>
       <div class="list">
-        <div class="me-card"><div class="ava big" id="meAva"></div><div><b id="meName"></b><div class="mynum" id="meNum"></div><div class="mute" id="connState">подключение…</div></div></div>
+        <div class="me-card"><div class="ava big" id="meAva"></div><div><b id="meName" class="me-edit" title="Изменить имя"></b><div class="mynum" id="meNum"></div><div class="mute" id="connState">подключение…</div></div></div>
         <div class="group">
           <div class="item" id="bPush"><span>🔔</span><div>Уведомления о звонках и сообщениях<small id="pushState"></small></div></div>
           <div class="item"><span>🎥</span><div>Качество видео по умолчанию<small>Это максимум: при слабом интернете качество снижается само и возвращается, когда скорость растёт.<select id="defQuality"><option value="hd">1080p — авто (рекомендуется)</option><option value="high">720p</option><option value="medium">540p</option><option value="low">360p (экономия трафика)</option></select></small></div></div>
@@ -219,10 +219,10 @@
   addEventListener('unhandledrejection', function (e) { var r = e.reason; d('reject', r && (r.stack || r.message) || r); });
 })();
 </script>
-<script src="/crypto.js?v=24"></script>
-<script src="/app.js?v=24"></script>
-<script src="/games-rules.js?v=24"></script>
-<script src="/games-nardy.js?v=24"></script>
-<script src="/games.js?v=24"></script>
+<script src="/crypto.js?v=25"></script>
+<script src="/app.js?v=25"></script>
+<script src="/games-rules.js?v=25"></script>
+<script src="/games-nardy.js?v=25"></script>
+<script src="/games.js?v=25"></script>
 </body>
 </html>
