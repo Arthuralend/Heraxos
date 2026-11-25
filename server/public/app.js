@@ -1,5 +1,5 @@
 // Ahazang — клиент
-const APP_VERSION = '25';
+const APP_VERSION = '26';
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 let token = localStorage.getItem('hx_token'), me = localStorage.getItem('hx_me');
@@ -538,6 +538,9 @@ $('bGameChat').onclick = () => {
     { label: '♞ Шахматы', primary: true, on: () => hxChatInvite(peer, 'chess') },
     { label: '⛀ Шашки', on: () => hxChatInvite(peer, 'checkers') },
     { label: '🎲 Нарды', on: () => hxChatInvite(peer, 'nardy') },
+    { label: '🚢 Морской бой', on: () => hxChatInvite(peer, 'sea') },
+    { label: '🃏 Дурак', on: () => hxChatInvite(peer, 'durak') },
+    { label: '🔤 Эрудит', on: () => hxChatInvite(peer, 'erudit') },
     { label: 'Отмена' },
   ]);
 };
