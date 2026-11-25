@@ -42,6 +42,8 @@ const save = () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => {
 const pairKey = (a, b) => [a, b].sort().join('|');
 const LOGIN_RE = /^[a-zA-Z0-9_.\-а-яА-ЯёЁ]{3,24}$/;
 const name = (k) => (db.users[k] ? db.users[k].login : k);
+// имя, которое человек указал о себе (как в WhatsApp: может совпадать у разных людей)
+const pname = (k) => (db.users[k] ? db.users[k].pname || (/^u[0-9a-f]{10}$/.test(k) ? '' : db.users[k].login) : '');
 const C = (u) => { u.contacts ||= []; u.requests ||= []; u.sent ||= []; return u; };
 const isContact = (a, b) => !!(db.users[a] && db.users[b] && C(db.users[a]).contacts.includes(b) && C(db.users[b]).contacts.includes(a));
 // блокировка: заблокированный не может писать, звонить, отправлять файлы и заявки (в обе стороны)
@@ -67,7 +69,8 @@ function randomNum() {
 function setNum(key, n) { const u = db.users[key]; if (u.num) numIndex.delete(u.num); u.num = n; numIndex.set(n, key); }
 const keyByNum = (n) => numIndex.get(String(n || '').replace(/\D/g, ''));
 // имя, под которым viewer сохранил пользователя key (или его номер)
-const dispFor = (viewer, key) => ((db.users[viewer] && db.users[viewer].book && db.users[viewer].book[key]) || fmtNum(db.users[key] && db.users[key].num) || name(key));
+const dispFor = (viewer, key) => ((db.users[viewer] && db.users[viewer].book && db.users[viewer].book[key]) ||
+  [fmtNum(db.users[key] && db.users[key].num), pname(key) && '~' + pname(key)].filter(Boolean).join(' ') || name(key));
 // Перенос со старой схемы: всем выдаём номера, взаимные контакты → телефонная книга (имя = прежний логин)
 (function migrateNumbers() {
   let changed = false;
@@ -122,7 +125,10 @@ function newToken(login) { const t = crypto.randomBytes(24).toString('hex'); db.
 
 app.post('/api/register', async (req, res) => {
   if (limited('r' + req.ip, 5)) return res.status(429).json({ error: 'Слишком много попыток, подождите минуту' });
-  const { login, password } = req.body || {}, want = String((req.body && req.body.num) || '').replace(/\D/g, '');
+  let { login, password } = req.body || {}; const want = String((req.body && req.body.num) || '').replace(/\D/g, '');
+  const pn = cleanName(req.body && req.body.name);
+  if (!login && pn) { do login = 'u' + crypto.randomBytes(5).toString('hex'); while (db.users[login]); } // вход — по номеру, имя может повторяться
+  if (!login && !pn) return res.status(400).json({ error: 'Укажите имя' });
   if (!LOGIN_RE.test(login || '')) return res.status(400).json({ error: 'Логин: 3–24 символа (буквы, цифры, _ . -)' });
   if (!password || password.length < 6) return res.status(400).json({ error: 'Пароль не короче 6 символов' });
   const key = login.toLowerCase();
@@ -130,9 +136,9 @@ app.post('/api/register', async (req, res) => {
   if (want && !/^\d{6}$/.test(want)) return res.status(400).json({ error: 'Номер — ровно 6 цифр (или оставьте поле пустым)' });
   if (want && numIndex.has(want)) return res.status(409).json({ error: 'Этот номер уже занят, выберите другой' });
   if (want && isPretty(want)) return res.status(409).json({ error: 'Этот номер зарезервирован, выберите другой' });
-  db.users[key] = { login, hash: await bcrypt.hash(password, 11), subs: [], created: Date.now(), book: {} };
+  db.users[key] = { login, pname: pn || login, hash: await bcrypt.hash(password, 11), subs: [], created: Date.now(), book: {} };
   setNum(key, want || randomNum());
-  res.json({ token: newToken(key), login, num: db.users[key].num, keys: null });
+  res.json({ token: newToken(key), login, num: db.users[key].num, pname: pname(key), keys: null });
 });
 
 app.post('/api/login', async (req, res) => {
@@ -143,11 +149,15 @@ app.post('/api/login', async (req, res) => {
   if (!db.users[key] && /^[\d\s+-]+$/.test(key)) key = keyByNum(key) || key;
   const u = db.users[key];
   if (!u || !(await bcrypt.compare(password || '', u.hash))) return res.status(401).json({ error: 'Неверный логин, номер или пароль' });
-  res.json({ token: newToken(key), login: u.login, num: u.num, keys: keysOf(u) });
+  res.json({ token: newToken(key), login: u.login, num: u.num, pname: pname(key), keys: keysOf(u) });
 });
 
 app.post('/api/logout', auth, (req, res) => { delete db.tokens[tokenOf(req)]; save(); res.json({ ok: true }); });
-app.get('/api/me', auth, (req, res) => res.json({ login: name(req.me), num: db.users[req.me].num, hasKeys: !!db.users[req.me].pub, voip: !!apnsKey }));
+app.post('/api/profile', auth, (req, res) => {
+  const n = cleanName(req.body && req.body.name); if (!n) return res.status(400).json({ error: 'Имя не может быть пустым' });
+  db.users[req.me].pname = n; save(); res.json({ pname: n });
+});
+app.get('/api/me', auth, (req, res) => res.json({ login: name(req.me), pname: pname(req.me), num: db.users[req.me].num, hasKeys: !!db.users[req.me].pub, voip: !!apnsKey }));
 
 // ---------- iPhone: звонки как в WhatsApp (PushKit/CallKit через Apple Push Notification service) ----------
 // В .env: APNS_KEY_FILE=/opt/ahazang/apns.p8, APNS_KEY_ID=…, APNS_TEAM_ID=…, (APNS_TOPIC=am.ahazang.app)
@@ -236,7 +246,7 @@ app.get('/api/key/:login', auth, contactOnly, (req, res) => {
 
 // ---------- контакты: телефонная книга (без подтверждения второй стороны) ----------
 const book = (k) => (db.users[k].book ||= {});
-const peerInfo = (me, k) => ({ login: name(k), num: db.users[k].num, name: book(me)[k] || '', online: isOnline(k), lastSeen: db.users[k].lastSeen || 0 });
+const peerInfo = (me, k) => ({ login: name(k), pname: pname(k), num: db.users[k].num, name: book(me)[k] || '', online: isOnline(k), lastSeen: db.users[k].lastSeen || 0 });
 app.get('/api/contacts', auth, (req, res) => {
   const u = db.users[req.me];
   res.json({
@@ -287,7 +297,7 @@ app.get('/api/chats', auth, (req, res) => {
     const peer = a === req.me ? b : a; if (!db.users[peer] || !list.length) continue;
     const myRead = (db.reads[pk] || {})[req.me] || 0, peerRead = (db.reads[pk] || {})[peer] || 0;
     const last = list[list.length - 1];
-    out.push({ peer: name(peer), num: db.users[peer].num, name: book(req.me)[peer] || '', blocked: blocks(req.me, peer), online: isOnline(peer), last: { ...last, f: name(last.f) }, peerRead,
+    out.push({ peer: name(peer), pname: pname(peer), num: db.users[peer].num, name: book(req.me)[peer] || '', blocked: blocks(req.me, peer), online: isOnline(peer), last: { ...last, f: name(last.f) }, peerRead,
       unread: list.filter((m) => m.f === peer && m.ts > myRead).length });
   }
   res.json(out.sort((x, y) => y.last.ts - x.last.ts));
@@ -670,7 +680,7 @@ wss.on('connection', (ws, req) => {
         (db.msgs[pk] ||= []).push(msg); if (db.msgs[pk].length > 5000) db.msgs[pk].splice(0, 1000); save();
         ws.send(JSON.stringify({ type: 'sent', cid: m.cid, id: msg.id, ts: msg.ts, to: name(to) }));
         for (const w of online.get(me) || []) if (w !== ws) w.send(JSON.stringify({ type: 'msg', ...msg, f: name(me), peer: name(to) }));
-        sendTo(to, { type: 'msg', ...msg, f: name(me), peer: name(me), fn: dispFor(to, me), fnum: db.users[me].num });
+        sendTo(to, { type: 'msg', ...msg, f: name(me), peer: name(me), fn: dispFor(to, me), fnum: db.users[me].num, fpn: pname(me) });
         pushTo(to, { title: dispFor(to, me), body: '🔒 Новое сообщение', from: name(me), kind: 'msg' });
         break;
       }

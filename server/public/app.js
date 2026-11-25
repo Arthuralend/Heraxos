@@ -1,5 +1,5 @@
 // Ahazang — клиент
-const APP_VERSION = '24';
+const APP_VERSION = '25';
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 let token = localStorage.getItem('hx_token'), me = localStorage.getItem('hx_me');
@@ -47,6 +47,9 @@ function dn(login) {
   const p = people.get(String(login).toLowerCase());
   return p ? p.name || fmtNum(p.num) || p.login : String(login);
 }
+// имя, которое человек указал о себе; показывается серым «~Имя», если вы его не сохранили (как в WhatsApp)
+const pnOf = (login) => { const p = people.get(String(login).toLowerCase()); return p && !p.name && p.pname ? p.pname : ''; };
+const pnTag = (login) => (pnOf(login) ? ` <span class="pn">~${esc(pnOf(login))}</span>` : '');
 const numOf = (login) => { const p = people.get(String(login).toLowerCase()); return p && p.num ? fmtNum(p.num) : ''; };
 const inBook = (login) => users.some((u) => u.login.toLowerCase() === String(login).toLowerCase());
 async function ensurePeer(login) {
@@ -59,8 +62,10 @@ const COLORS = ['#c96442', '#b5835a', '#8b6f47', '#6a8a82', '#7e8fb8', '#a26b8f'
 function avatar(el, login, isOnline) {
   let h = 0; for (const c of login) h = (h * 31 + c.charCodeAt(0)) | 0;
   el.style.background = COLORS[Math.abs(h) % COLORS.length];
-  const label = dn(login) || '?';
-  el.innerHTML = esc((/^[\d+ ]/.test(label) ? '#' : label[0]).toUpperCase()) + (isOnline ? '<i></i>' : '');
+  let label = dn(login) || '?';
+  if (/^[\d+ ]/.test(label) && pnOf(login)) label = pnOf(login);
+  if (login === me) label = localStorage.getItem('hx_pn') || label;
+  el.innerHTML = esc((/^[\d+ ]/.test(label) ? '#' : [...label][0]).toUpperCase()) + (isOnline ? '<i></i>' : '');
 }
 const avaHTML = (login, on, cls = '') => { const d = document.createElement('div'); d.className = 'ava ' + cls; avatar(d, login, on); return d.outerHTML; };
 const pad = (n) => String(n).padStart(2, '0');
@@ -99,19 +104,22 @@ async function api(url, body, method) {
 // ---------- вход / ключи ----------
 async function doAuth(kind) {
   const reg = kind === 'register';
-  const login = (reg ? $('rLogin') : $('login')).value.trim(), password = (reg ? $('rPass') : $('pass')).value;
+  const login = reg ? '' : $('login').value.trim(), password = (reg ? $('rPass') : $('pass')).value;
+  const pn = reg ? $('rName').value.trim() : '';
+  if (reg && !pn) return ($('aerr').textContent = 'Как вас зовут? Имя увидят те, кто вас ещё не сохранил');
   const num = reg ? $('rNum').value.replace(/\D/g, '') : '';
   if (reg && num && num.length !== 6) return ($('aerr').textContent = 'Номер — ровно 6 цифр, или оставьте поле пустым');
   $('aerr').textContent = '';
-  if (!login || !password) return ($('aerr').textContent = 'Введите логин и пароль');
+  if ((!reg && !login) || !password) return ($('aerr').textContent = reg ? 'Придумайте пароль' : 'Введите номер и пароль');
   if (reg && password !== $('rPass2').value) return ($('aerr').textContent = 'Пароли не совпадают');
   if (reg && !$('rTerms').checked) return ($('aerr').textContent = 'Примите условия использования и политику конфиденциальности');
   const btn = reg ? $('bReg') : $('bLogin'); btn.disabled = true;
   $('aerr').textContent = reg ? 'Создаём ключи шифрования…' : 'Вход…';
   try {
-    const j = await api('/api/' + kind, reg ? { login, password, num } : { login, password });
+    const j = await api('/api/' + kind, reg ? { name: pn, password, num } : { login, password });
+    if (j.pname) localStorage.setItem('hx_pn', j.pname);
     if (j.num) localStorage.setItem('hx_num', j.num);
-    if (reg && j.num) setTimeout(() => toast('Ваш номер: ' + fmtNum(j.num), 5000), 800);
+    if (reg && j.num) setTimeout(() => toast('Ваш номер: ' + fmtNum(j.num) + ' — по нему вас находят и по нему вы входите', 6000), 800);
     token = j.token; me = j.login;
     let local;
     if (j.keys) local = await HX.unwrap(j.keys, password);
@@ -124,7 +132,7 @@ async function doAuth(kind) {
 function authTab(reg) {
   $('tLogin').classList.toggle('on', !reg); $('tReg').classList.toggle('on', reg);
   $('fLogin').hidden = reg; $('fReg').hidden = !reg; $('aerr').textContent = '';
-  setTimeout(() => (reg ? $('rLogin') : $('login')).focus(), 50);
+  setTimeout(() => (reg ? $('rName') : $('login')).focus(), 50);
 }
 $('tLogin').onclick = () => authTab(false);
 $('tReg').onclick = () => authTab(true);
@@ -153,8 +161,8 @@ async function start() {
   await HX.load(local);
   if (AND) try { AND.setSession(token, me); } catch {}
   $('auth').classList.remove('on'); $('app').classList.add('on');
-  $('meName').textContent = me; avatar($('meAva'), me); showMyNum(localStorage.getItem('hx_num'));
-  api('/api/me').then((j) => { serverVoip = !!j.voip; if (j.num) { localStorage.setItem('hx_num', j.num); showMyNum(j.num); } }).catch(() => {});
+  $('meName').textContent = localStorage.getItem('hx_pn') || me; avatar($('meAva'), me); showMyNum(localStorage.getItem('hx_num'));
+  api('/api/me').then((j) => { serverVoip = !!j.voip; if (j.pname) { localStorage.setItem('hx_pn', j.pname); $('meName').textContent = j.pname; } if (j.num) { localStorage.setItem('hx_num', j.num); showMyNum(j.num); } }).catch(() => {});
   if (voipToken) window.hxSetVoip(voipToken);
   // с версии 6 по умолчанию 1080p (снижается автоматически только при слабом интернете)
   if (localStorage.getItem('hx_q_v') !== '2') { localStorage.setItem('hx_q', 'hd'); localStorage.setItem('hx_q_v', '2'); }
@@ -283,7 +291,7 @@ async function loadUsers() {
 }
 function contactRow(login, actions) {
   const k = login.toLowerCase(), d = document.createElement('div'); d.className = 'row';
-  d.innerHTML = `${avaHTML(login, online.has(k))}<div class="body"><div class="top"><b>${esc(dn(login))}</b></div><div class="sub"><span></span></div></div><div class="act">${actions}</div>`;
+  d.innerHTML = `${avaHTML(login, online.has(k))}<div class="body"><div class="top"><b>${esc(dn(login))}${pnTag(login)}</b></div><div class="sub"><span></span></div></div><div class="act">${actions}</div>`;
   return d;
 }
 function renderUsers() {
@@ -345,6 +353,17 @@ $('fAdd').onsubmit = async (e) => {
 };
 
 // ---------- мой номер ----------
+// своё имя: его видят те, кто вас ещё не сохранил
+$('meName').onclick = () => {
+  infoSheet('Ваше имя', `<p class="mute">Его видят люди, которые ещё не сохранили ваш номер. Имя может совпадать с именами других людей.</p><input type="text" id="pnIn" maxlength="40" placeholder="Имя" value="${esc($('meName').textContent)}">`, [
+    { label: 'Сохранить', primary: true, on: async () => {
+      const v = $('pnIn').value.trim(); if (!v) return;
+      try { const r = await api('/api/profile', { name: v }); localStorage.setItem('hx_pn', r.pname); $('meName').textContent = r.pname; toast('Имя сохранено', 1500); } catch (e) { toast(e.message); }
+    } },
+    { label: 'Отмена' },
+  ]);
+  setTimeout(() => $('pnIn') && $('pnIn').focus(), 100);
+};
 function showMyNum(n) { $('meNum').textContent = n ? '№ ' + fmtNum(n) : ''; $('myNumState').textContent = n ? fmtNum(n) + ' — нажмите, чтобы сменить' : '—'; }
 $('bMyNum').onclick = () => {
   const n = localStorage.getItem('hx_num') || '';
@@ -375,7 +394,7 @@ let lcTimer; const loadChatsSoon = () => { clearTimeout(lcTimer); lcTimer = setT
 async function loadChats() {
   try {
     chats = await api('/api/chats');
-    for (const c of chats) { remember({ login: c.peer, num: c.num, name: c.name }); c.preview = await decryptMsg(c.peer, c.last); const k = c.peer.toLowerCase(); c.online ? online.add(k) : online.delete(k); }
+    for (const c of chats) { remember({ login: c.peer, num: c.num, name: c.name, pname: c.pname }); c.preview = await decryptMsg(c.peer, c.last); const k = c.peer.toLowerCase(); c.online ? online.add(k) : online.delete(k); }
     renderChats();
   } catch {}
 }
@@ -395,7 +414,7 @@ function renderChats() {
     const tick = mine ? (c.last.ts <= c.peerRead ? TICK2 : TICK1) + ' ' : '';
     const prev = c.preview === null ? '🔒 Сообщение недоступно' : previewOf(c.preview);
     const d = document.createElement('div'); d.className = 'row' + (cur && cur.peer === c.peer ? ' sel' : '');
-    d.innerHTML = `${avaHTML(c.peer, online.has(c.peer.toLowerCase()))}<div class="body"><div class="top"><b>${esc(dn(c.peer))}</b><time class="${c.unread ? 'unr' : ''}">${fmtList(c.last.ts)}</time></div>
+    d.innerHTML = `${avaHTML(c.peer, online.has(c.peer.toLowerCase()))}<div class="body"><div class="top"><b>${esc(dn(c.peer))}${pnTag(c.peer)}</b><time class="${c.unread ? 'unr' : ''}">${fmtList(c.last.ts)}</time></div>
       <div class="sub"><span>${tick}${esc(prev)}</span>${c.unread ? `<b class="badge">${c.unread}</b>` : ''}</div></div>`;
     d.onclick = () => { if (d.dataset.lp) { delete d.dataset.lp; return; } openChat(c.peer); };
     onLongPress(d, () => { d.dataset.lp = '1'; chatMenu(c.peer); });
@@ -447,7 +466,8 @@ $('bVideo').onclick = () => cur && startCall(cur.peer, true);
 
 function updateHeadStatus() {
   if (!cur) return; const n = numOf(cur.peer), shown = dn(cur.peer);
-  $('cStatus').textContent = (n && n !== shown ? n + ' · ' : '') + fmtSeen(cur.peer.toLowerCase());
+  const pn = pnOf(cur.peer);
+  $('cStatus').textContent = (pn ? '~' + pn + ' · ' : '') + fmtSeen(cur.peer.toLowerCase());
 }
 
 function renderMsgs(scroll) {
@@ -603,6 +623,7 @@ function onSent(m) {
   loadChatsSoon();
 }
 async function onMessage(m) {
+  if (m.fpn && m.f) remember({ login: m.f, num: m.fnum, pname: m.fpn });
   if (cur && cur.peer.toLowerCase() === m.peer.toLowerCase()) {
     if (cur.msgs.some((x) => x.id === m.id)) return;
     m.text = await decryptMsg(cur.peer, m); cur.msgs.push(m); renderMsgs(); markRead();
