@@ -1,5 +1,5 @@
 // Ahazang — клиент
-const APP_VERSION = '27';
+const APP_VERSION = '28';
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 let token = localStorage.getItem('hx_token'), me = localStorage.getItem('hx_me');

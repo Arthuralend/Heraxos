@@ -773,3 +773,16 @@ html.is-android .androidOnly{display:flex!important}
 .er-t i{font-size:calc(var(--cs,24px)*.24)}
 .er-rack .er-t b{font-size:clamp(20px,6vw,26px)}
 .er-rack .er-t i{font-size:11px}
+/* дурак: имена, тасовка, крупнее во весь экран */
+.dk{position:relative}
+.dk-name{display:none;color:rgba(255,255,255,.9);font-size:14px;text-shadow:0 1px 2px rgba(0,0,0,.4)}
+.dk-name b{font-weight:700}
+.dk-full .dk-name{display:block;text-align:center;flex:none}
+.dk-full .dk{--cw:min(calc(100vw * .24),calc(100dvh * .102));gap:6px}
+.dk-full .dk-mid{padding-left:44px}
+.dk-full .dk-fs{bottom:14px}
+.dk-shuf{position:absolute;left:50%;top:50%;width:var(--cw);aspect-ratio:5/7;transform:translate(-50%,-50%);z-index:6}
+.dk-shuf .dk-card{position:absolute;inset:0;animation:dkShuf .33s ease-in-out infinite alternate;animation-delay:calc(var(--i) * -.04s)}
+.dk-shuf .dk-card:nth-child(odd){animation-name:dkShuf2}
+@keyframes dkShuf{0%{transform:translateX(0) rotate(0)}100%{transform:translateX(calc(var(--cw)*.55)) rotate(8deg)}}
+@keyframes dkShuf2{0%{transform:translateX(0) rotate(0)}100%{transform:translateX(calc(var(--cw)*-.55)) rotate(-8deg)}}
