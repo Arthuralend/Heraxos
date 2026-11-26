@@ -110,17 +110,30 @@
       let S = null, sel = -1, destroyed = false, aiT = 0, ended = false;
 
       api.frame('Дурак', `<div class="dk">
+          <div class="dk-name top"></div>
           <div class="dk-opp"></div>
           <div class="dk-mid"><div class="dk-deck"></div><div class="dk-table"></div></div>
           <div class="dk-hand"></div>
+          <div class="dk-name bot"></div>
           <div class="dk-fs"><button class="dk-fsx" data-fs="1" title="Обычный вид">✕</button><div class="dk-fs-acts"></div></div>
         </div>`, '');
       const R = api.root, oppEl = R.querySelector('.dk-opp'), deckEl = R.querySelector('.dk-deck'), tableEl = R.querySelector('.dk-table'), handEl = R.querySelector('.dk-hand'), foot = R.querySelector('.gx-foot');
 
       function start(seed) {
-        S = deal(seed, api.rng, api.shuffle);
-        render(); api.sndMove();
-        if (solo) schedule();
+        shuffleAnim(() => {
+          if (destroyed) return;
+          S = deal(seed, api.rng, api.shuffle);
+          render(); api.sndMove();
+          if (solo) schedule();
+        });
+      }
+      // тасовка колоды перед раздачей — 1 секунда
+      function shuffleAnim(done) {
+        const box = document.createElement('div'); box.className = 'dk-shuf';
+        box.innerHTML = [...Array(8)].map((_, i) => `<div class="dk-card back" style="--i:${i}"></div>`).join('');
+        R.querySelector('.dk').appendChild(box);
+        let k = 0; const t = setInterval(() => { api.beep(900 + Math.random() * 400, 0.015, 'square', 0.025); if (++k > 9) clearInterval(t); }, 95);
+        setTimeout(() => { box.remove(); done(); }, 1000);
       }
 
       function render() {
@@ -145,6 +158,9 @@
         handEl.style.setProperty('--n', hand.length);
         // анимация перелёта
         R.querySelectorAll('.dk [data-k]').forEach((e) => { const r = prev.get(e.dataset.k) || (e.closest('.dk-deck') ? null : deckRect); if (r) api.fly(e, r); });
+        // имена и число карт (видны во весь экран)
+        R.querySelector('.dk-name.top').innerHTML = `<b>${esc(api.oppName)}</b> · карт: ${S.hands[op].length}`;
+        R.querySelector('.dk-name.bot').innerHTML = `<b>Вы</b> · карт: ${S.hands[my].length}${S.out ? '' : iAtt ? ' · ваш ход' : ' · отбивайтесь'}`;
         // кнопки и подписи
         let btn = '';
         if (!S.out) {
