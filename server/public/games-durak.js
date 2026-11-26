@@ -83,7 +83,22 @@
   }
 
   // ---------- графика ----------
-  const cardHTML = (c, cls = '') => `<div class="dk-card ${RED[st(c)] ? 'red' : ''} ${cls}" data-k="${c}"><b>${RANKS[rk(c)]}<i>${SUITS[st(c)]}</i></b><span>${SUITS[st(c)]}</span><b class="br">${RANKS[rk(c)]}<i>${SUITS[st(c)]}</i></b></div>`;
+  // классическая раскладка значков масти на картах 6–10
+  const PIPS = {
+    6: [[30, 20], [70, 20], [30, 50], [70, 50], [30, 80], [70, 80]],
+    7: [[30, 20], [70, 20], [50, 35], [30, 50], [70, 50], [30, 80], [70, 80]],
+    8: [[30, 20], [70, 20], [50, 35], [30, 50], [70, 50], [50, 65], [30, 80], [70, 80]],
+    9: [[30, 18], [70, 18], [30, 39], [70, 39], [50, 50], [30, 61], [70, 61], [30, 82], [70, 82]],
+    10: [[30, 18], [70, 18], [50, 29], [30, 39], [70, 39], [30, 61], [70, 61], [50, 71], [30, 82], [70, 82]],
+  };
+  const COURT = { 11: '⚔', 12: '♛', 13: '♚' };
+  function face(c) {
+    const r = rk(c), s = SUITS[st(c)];
+    if (PIPS[r]) return `<div class="dk-pips">${PIPS[r].map(([x, y]) => `<i style="left:${x}%;top:${y}%"${y > 50 ? ' class="dn"' : ''}>${s}</i>`).join('')}</div>`;
+    if (r === 14) return `<div class="dk-ace">${s}</div>`;
+    return `<div class="dk-court"><em>${COURT[r]}</em><strong>${RANKS[r]}</strong><i>${s}</i></div>`;
+  }
+  const cardHTML = (c, cls = '') => `<div class="dk-card ${RED[st(c)] ? 'red' : ''} ${cls}" data-k="${c}"><b>${RANKS[rk(c)]}<i>${SUITS[st(c)]}</i></b>${face(c)}<b class="br">${RANKS[rk(c)]}<i>${SUITS[st(c)]}</i></b></div>`;
   const backHTML = (k, cls = '') => `<div class="dk-card back ${cls}" ${k != null ? `data-k="${k}"` : ''}></div>`;
   const ART = `<svg viewBox="0 0 100 100" class="art"><rect x="8" y="8" width="84" height="84" rx="10" fill="#2f6b4f"/><g transform="rotate(-14 40 56)"><rect x="20" y="26" width="34" height="48" rx="5" fill="#fff" stroke="#d8d2c4"/><text x="26" y="40" font-size="11" font-weight="700" fill="#c0392b">Т</text><text x="37" y="60" font-size="18" fill="#c0392b">♥</text></g><g transform="rotate(10 62 54)"><rect x="46" y="28" width="34" height="48" rx="5" fill="#fff" stroke="#d8d2c4"/><text x="52" y="42" font-size="11" font-weight="700" fill="#1d1d1d">К</text><text x="62" y="62" font-size="18" fill="#1d1d1d">♠</text></g></svg>`;
 
@@ -98,6 +113,7 @@
           <div class="dk-opp"></div>
           <div class="dk-mid"><div class="dk-deck"></div><div class="dk-table"></div></div>
           <div class="dk-hand"></div>
+          <div class="dk-fs"><button class="dk-fsx" data-fs="1" title="Обычный вид">✕</button><div class="dk-fs-acts"></div></div>
         </div>`, '');
       const R = api.root, oppEl = R.querySelector('.dk-opp'), deckEl = R.querySelector('.dk-deck'), tableEl = R.querySelector('.dk-table'), handEl = R.querySelector('.dk-hand'), foot = R.querySelector('.gx-foot');
 
@@ -118,7 +134,8 @@
         oppEl.innerHTML = oh.map((c, k) => backHTML(c, '')).join('');
         oppEl.style.setProperty('--n', oh.length);
         // колода и козырь
-        deckEl.innerHTML = S.deck.length ? `${cardHTML(S.trumpCard, 'trump')}${S.deck.length > 1 ? backHTML(null, 'pile') : ''}<em>${S.deck.length}</em>` : `<div class="dk-trump-only">${SUITS[S.trump]}</div>`;
+        // колода: рубашкой вверх с числом оставшихся карт, козырь лежит сверху открытым
+        deckEl.innerHTML = S.deck.length ? `${S.deck.length > 1 ? `<div class="dk-card back pile"><em>${S.deck.length}</em></div>` : ''}${cardHTML(S.trumpCard, 'trump')}` : `<div class="dk-trump-only">${SUITS[S.trump]}</div>`;
         // стол
         tableEl.innerHTML = S.table.map((x, i) => `<div class="dk-pair ${x.d == null && iDef && !S.taking && sel >= 0 && beats(S, x.a, sel) ? 'target' : ''}" data-i="${i}">${cardHTML(x.a)}${x.d != null ? cardHTML(x.d, 'cover') : ''}</div>`).join('');
         // моя рука
@@ -135,8 +152,10 @@
           else if (canGive(S, my)) btn = '<button class="btn dk-btn" data-a="give">Забирай</button>';
           else if (canTake(S, my)) btn = '<button class="btn ghost dk-btn" data-a="take">Беру</button>';
         }
-        foot.innerHTML = btn + (S.out ? '' : `<button class="pill" data-a="resign">${solo ? 'Новая партия' : 'Сдаться'}</button>`);
-        foot.querySelectorAll('[data-a]').forEach((b) => (b.onclick = () => {
+        foot.innerHTML = btn + (S.out ? '' : `<button class="pill" data-a="resign">${solo ? 'Новая партия' : 'Сдаться'}</button><button class="pill" data-fs="1" title="Во весь экран">⤢</button>`);
+        R.querySelector('.dk-fs-acts').innerHTML = btn;
+        R.querySelectorAll('[data-fs]').forEach((b) => (b.onclick = toggleFull));
+        R.querySelectorAll('.gx-foot [data-a], .dk-fs-acts [data-a]').forEach((b) => (b.onclick = () => {
           if (b.dataset.a === 'resign') return solo ? api.restart() : api.resign(() => { api.send({ k: 'resign' }); finish('lose', 'Вы сдались'); });
           act({ t: b.dataset.a });
         }));
@@ -144,6 +163,15 @@
         const opSt = S.out ? '' : !iAtt ? (S.table.length ? 'Подкидывает…' : 'Ходит…') : S.taking ? 'Берёт' : openCount(S) ? 'Отбивается…' : '';
         const turn = S.out ? null : ((iAtt && (!S.table.length || !openCount(S) || S.taking)) || (iDef && openCount(S) && !S.taking)) ? 'me' : 'opp';
         api.bars(turn, meSt, opSt, `<span class="dk-cnt">карт: ${S.hands[my].length}</span>`, `<span class="dk-cnt">карт: ${S.hands[op].length}</span>`);
+      }
+
+      // во весь экран: стол боком на весь экран, без камер (соперник сверху, вы снизу)
+      function toggleFull() {
+        const on = !R.querySelector('.g-play').classList.contains('dk-full');
+        R.querySelector('.g-play').classList.toggle('dk-full', on);
+        R.querySelector('.dk').classList.toggle('novideo', on);
+        window.dispatchEvent(new Event('resize'));
+        render();
       }
 
       // ---------- мои действия ----------
