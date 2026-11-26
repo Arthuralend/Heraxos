@@ -188,10 +188,20 @@
       const solo = !sess.peer, my = sess.color, op = other(my);
       let G = null, dict = null, pend = [], selRack = -1, destroyed = false, ended = false, aiT = 0, seed = 0, swapMode = false, swapSel = new Set();
 
-      api.frame('Эрудит', `<div class="er"><div class="er-board"></div><div class="er-info"></div><div class="er-rack"></div></div>`, '');
+      api.frame('Эрудит', `<div class="er"><div class="er-view zoom"><div class="er-board"></div></div><div class="er-info"></div><div class="er-rack"></div></div>`, '');
       api.root.querySelector('.g-play').style.setProperty('--vs', 'clamp(70px, calc(100dvh - var(--sat) - var(--sab) - 650px), 124px)');
       const R = api.root, boardEl = R.querySelector('.er-board'), rackEl = R.querySelector('.er-rack'), info = R.querySelector('.er-info'), foot = R.querySelector('.gx-foot');
       for (let i = 0; i < N * N; i++) { const d = document.createElement('div'); d.className = 'er-c'; d.dataset.i = i; boardEl.appendChild(d); }
+      // поле вдвое крупнее; двигается пальцем (прокрутка), кнопка 🔍 — показать целиком
+      const view = R.querySelector('.er-view');
+      let zoom = true;
+      const fitFonts = () => boardEl.style.setProperty('--cs', boardEl.clientWidth / N + 'px');
+      function setZoom(z, focus = 112) {
+        zoom = z; view.classList.toggle('zoom', z); fitFonts();
+        if (z) { const cs = boardEl.clientWidth / N, r = (focus / N) | 0, c = focus % N; view.scrollLeft = (c + 0.5) * cs - view.clientWidth / 2; view.scrollTop = (r + 0.5) * cs - view.clientHeight / 2; }
+      }
+      requestAnimationFrame(() => setZoom(true));
+      window.addEventListener('resize', fitFonts);
       info.innerHTML = '<span class="mute">Загружаем словарь…</span>';
 
       const myRack = () => { // рука без выложенных в этом ходу фишек
@@ -218,7 +228,7 @@
           : myTurn ? '<span class="mute">Нажмите фишку, затем клетку на поле</span>' : `<span class="mute">${solo ? 'Компьютер думает…' : 'Ход соперника'} · в мешке ${G.bag.length}</span>`;
         foot.innerHTML = G.over ? '' : !myTurn ? `<button class="pill" data-a="resign">${solo ? 'Новая партия' : 'Сдаться'}</button>`
           : swapMode ? `<button class="btn er-go" data-a="doswap">${swapSel.size ? `Обменять ${swapSel.size}` : 'Пропустить ход'}</button><button class="pill" data-a="noswap">Отмена</button>`
-          : `<button class="btn er-go" data-a="play" ${ev && ev.ok ? '' : 'disabled'}>Сделать ход</button>${pend.length ? '<button class="pill" data-a="back">Вернуть</button>' : `<button class="pill" data-a="swap">Обмен / пас</button>`}<button class="pill" data-a="mix">⤨</button>`;
+          : `<button class="btn er-go" data-a="play" ${ev && ev.ok ? '' : 'disabled'}>Сделать ход</button>${pend.length ? '<button class="pill" data-a="back">Вернуть</button>' : `<button class="pill" data-a="swap">Обмен / пас</button>`}<button class="pill" data-a="mix" title="Перемешать фишки">⤨</button><button class="pill" data-a="zoom" title="Масштаб">${zoom ? '🔍−' : '🔍+'}</button>`;
         foot.querySelectorAll('[data-a]').forEach((b) => (b.onclick = () => button(b.dataset.a)));
         const sc = (p) => `<span class="er-sc">${G.score[p]} очк.</span>`;
         api.bars(G.over ? null : myTurn ? 'me' : 'opp', G.over ? '' : myTurn ? 'Ваш ход' : '', G.over ? '' : !myTurn ? (solo ? 'Думает…' : 'Думает…') : '', sc(my), sc(op));
@@ -227,6 +237,7 @@
       function button(a) {
         if (a === 'resign') return solo ? api.restart() : api.resign(() => { api.send({ k: 'resign' }); finish('lose', 'Вы сдались'); });
         if (a === 'back') { pend = []; selRack = -1; return render(); }
+        if (a === 'zoom') { setZoom(!zoom); return render(); }
         if (a === 'mix') { const rk = G.racks[my]; api.shuffle(rk, Math.random); return render(); }
         if (a === 'swap') { if (G.bag.length < 7) { /* меняться нельзя — только пас */ } swapMode = true; swapSel.clear(); pend = []; return render(); }
         if (a === 'noswap') { swapMode = false; return render(); }
@@ -279,6 +290,7 @@
         const i = +c.dataset.i, r = (i / N) | 0, col = i % N;
         const pi = pend.findIndex((p) => p.r * N + p.c === i);
         if (pi >= 0) { pend.splice(pi, 1); return render(); }               // вернуть фишку в руку
+        if (!zoom && selRack < 0) { setZoom(true, i); return render(); }
         if (G.board[i] || selRack < 0) return;
         const l = myRack()[selRack]; if (!l) return;
         if (l === '*') return askJoker((x) => { pend.push({ r, c: col, l: x, j: true }); selRack = -1; api.sndMove(); render(); });

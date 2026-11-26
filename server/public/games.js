@@ -20,6 +20,17 @@
   const GAMES = Object.fromEntries(Object.entries(GAMES_ALL).filter(([k]) => !(k === 'tanks' && window.HeraxosPlatform === 'ios')));
 
 
+  // ---------- счёт побед и поражений с каждым соперником (хранится на телефоне) ----------
+  const scoreKey = (sess) => `hx_score_${KK(me)}_${sess.kind}_${sess.peer ? KK(sess.peer) : 'ai' + (sess.ai || 0)}`;
+  function getScore(sess) { try { return JSON.parse(localStorage.getItem(scoreKey(sess)) || '{"w":0,"l":0,"d":0}'); } catch { return { w: 0, l: 0, d: 0 }; } }
+  function addScore(sess, res) {
+    if (sess.scored) return; sess.scored = true;
+    const sc = getScore(sess); sc[res === 'win' ? 'w' : res === 'lose' ? 'l' : 'd']++;
+    try { localStorage.setItem(scoreKey(sess), JSON.stringify(sc)); } catch {}
+    const el = root.querySelector('.g-score'); if (el) el.outerHTML = scoreChip(sess);
+  }
+  const scoreChip = (sess) => { const sc = getScore(sess); return `<span class="g-score" title="Победы : поражения${sc.d ? ' (ничьи: ' + sc.d + ')' : ''}"><b>${sc.w}</b>:<b>${sc.l}</b></span>`; };
+
   // ---------- иконки ----------
   const PIECE = {
     p: '<circle cx="50" cy="35" r="13"/><path d="M38 52h24c-1 8 4 16 10 22H28c6-6 11-14 10-22z"/><rect x="34" y="47" width="32" height="7" rx="3.5"/><rect x="22" y="74" width="56" height="12" rx="5"/>',
@@ -379,7 +390,7 @@
     }
     root.querySelectorAll('.vslot').forEach((v) => v.classList.toggle('live', !!inCall && (v.dataset.who === 'me' ? callState.camOn : callState.remoteVideo)));
     let slots = '';
-    if (inCall) {
+    if (inCall && !root.querySelector('.novideo')) {
       const r = (who) => { const el = root.querySelector(`.vslot[data-who=${who}]`); if (!el) return null; const b = el.getBoundingClientRect(); return { x: b.left, y: b.top, w: b.width, h: b.height }; };
       slots = JSON.stringify({ peer: S.peer, remote: r('opp'), local: r('me') });
     }
@@ -400,7 +411,7 @@
     const oppName = sess.peer ? dn(sess.peer) : `Компьютер · ${['', 'легко', 'средне', 'сложно'][sess.ai] || ''}`;
     const title = isChess ? 'Шахматы' : 'Шашки';
 
-    show(`<header class="g-head"><button class="iconbtn" data-x="back"><svg><use href="#i-back"/></svg></button><h2>${title}</h2>
+    show(`<header class="g-head"><button class="iconbtn" data-x="back"><svg><use href="#i-back"/></svg></button><h2>${title}</h2>${scoreChip(sess)}
         <button class="iconbtn" data-x="flip" title="Повернуть доску">⇅</button></header>
       <div class="g-play">
         <div class="g-duo">${playerBar('opp', sess.peer || '', oppName)}${playerBar('me', me, 'Вы')}</div>
@@ -562,7 +573,7 @@
 
     function finish(o) {
       over = o; sess.finished = true;
-      const won = o.result === my, draw = o.result === 'draw';
+      const won = o.result === my, draw = o.result === 'draw'; addScore(sess, draw ? 'draw' : won ? 'win' : 'lose');
       const why = {
         mate: 'Мат', stalemate: 'Пат', material: 'Недостаточно фигур для мата', fifty: 'Правило 50 ходов', repetition: 'Троекратное повторение',
         resign: o.result === my ? 'Соперник сдался' : 'Вы сдались', agreed: 'Ничья по согласию', left: 'Соперник вышел',
@@ -682,7 +693,7 @@
     let dice = null, left = [], head = 0, hl = 1, made = [], steps = [], sel = -1, over = null, destroyed = false, busy = false, rolling = false, anim = 0;
     const oppName = sess.peer ? dn(sess.peer) : `Компьютер · ${['', 'легко', 'средне', 'сложно'][sess.ai] || ''}`;
 
-    show(`<header class="g-head"><button class="iconbtn" data-x="back"><svg><use href="#i-back"/></svg></button><h2>Нарды</h2><span></span></header>
+    show(`<header class="g-head"><button class="iconbtn" data-x="back"><svg><use href="#i-back"/></svg></button><h2>Нарды</h2>${scoreChip(sess)}</header>
       <div class="g-play">
         <div class="g-duo">${playerBar('opp', sess.peer || '', oppName)}${playerBar('me', me, 'Вы')}</div>
         <div class="g-board-wrap nb-wrap"><div class="nb"></div><div class="g-over" hidden></div></div>
@@ -911,7 +922,7 @@
 
     function finish(o) {
       over = o; sess.finished = true;
-      const won = o.result === my;
+      const won = o.result === my; addScore(sess, won ? 'win' : 'lose');
       const why = { mars: won ? 'Марс — соперник не успел выбросить ни одной шашки' : 'Марс', oin: '', resign: won ? 'Соперник сдался' : 'Вы сдались', left: 'Соперник вышел' }[o.reason] || '';
       if (won) sndEnd(); else beep(220, 0.3, 'sine', 0.1);
       const box = root.querySelector('.g-over');
@@ -964,7 +975,7 @@
       send: (o) => gsend(o, sess),
       /** Экран игры: шапка, два окошка видео, поле игры и кнопки снизу */
       frame(title, mainHTML, footHTML = '') {
-        show(`<header class="g-head"><button class="iconbtn" data-x="back"><svg><use href="#i-back"/></svg></button><h2>${title}</h2><span></span></header>
+        show(`<header class="g-head"><button class="iconbtn" data-x="back"><svg><use href="#i-back"/></svg></button><h2>${title}</h2>${scoreChip(sess)}</header>
           <div class="g-play gx">
             <div class="g-duo">${playerBar('opp', sess.peer || '', oppName)}${playerBar('me', me, 'Вы')}</div>
             <div class="gx-main">${mainHTML}<div class="g-over" hidden></div></div>
@@ -985,7 +996,7 @@
       },
       /** Итог партии */
       over(res, why = '') {
-        sess.finished = true;
+        sess.finished = true; addScore(sess, res);
         const won = res === 'win', draw = res === 'draw';
         if (won || draw) sndEnd(); else beep(220, 0.3, 'sine', 0.1);
         const box = root.querySelector('.g-over'); if (!box) return;
